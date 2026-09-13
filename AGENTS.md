@@ -332,13 +332,13 @@ git push
 ```
 patches/           # Nim patch sources (.nim) + Makefile, compiled to native binaries (ls patches/*/*.nim)
 patches/linux/     #   Linux compatibility - always on, not user-configurable (31)
-patches/community/ #   Opt-in features, each with a switch in Settings -> Extra -> Community Features (9)
+patches/community/ #   Opt-in features, each with a switch in Settings -> Extra -> Community Features (11)
 patches/core/      #   Always-on infrastructure the rest builds on: the Extra settings pages, the theme
                    #   engine, the GrowthBook override mechanism, multi-profile plumbing (7)
 js/                # Shared JS snippets embedded by Nim patches via staticRead ("../../js/..." from a patch)
 scripts/           # Build, validation, and launcher scripts (ls scripts/)
 scripts/tests/     # Feature test harnesses, grouped like patches/ (run: scripts/run-feature-tests.sh)
-scripts/tests/community/ #   Behavior tests for the opt-in community features (8)
+scripts/tests/community/ #   Behavior tests for the opt-in community features (11)
 scripts/tests/core/      #   Behavior tests for the core infrastructure features (5)
 scripts/tests/linux/     #   Behavior tests for the Linux compatibility patches (2)
 scripts/tests/lib/       #   Shared harness plumbing (theme-engine-harness.mjs), not tests themselves

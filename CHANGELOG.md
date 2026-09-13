@@ -2,6 +2,32 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-13
+
+### Custom models in the Code picker (new community feature)
+
+Models served by an Anthropic-compatible endpoint - DeepSeek's `/anthropic` API is the reference, a
+gateway works the same way - can now be listed in the Code tab's model picker **next to** Anthropic's
+own, and the sessions that pick one are sent to that endpoint with your key. Additive: the subscription
+login and every Claude model stay as they are, unlike the exclusive 3P mode.
+
+- `patches/community/add_feature_custom_models.nim`. Settings → Extra → **Models** is the editor: providers
+  (endpoint + key, a DeepSeek preset, a one-token connectivity test) and their models (id, display name,
+  images, thinking and default effort, optional badge). The key goes to a 0600 `custom-models/secrets.json`,
+  never into `claude-desktop-extra.json`, and is never shown again. The same configuration can be written by
+  hand under the `customModels` key of `claude-desktop-extra.jsonc` (key by value, env var or file); such a
+  provider shows locked in the panel. The on/off switch sits in Community Features like every other extra.
+- Why a patch: nothing local feeds that menu. The page builds it from `model_selector_config` in the
+  `/api/bootstrap` response and reports the ids back to the app; `modelPicker` in `~/.claude/settings.json`
+  only reaches the CLI's own `/model`. The patch pauses that response through the DevTools-protocol Fetch
+  domain and appends the configured entries in the shape the app's own 3P mode emits, so the page renders
+  them like any other model and Anthropic's list keeps updating itself.
+- Routing: the Claude Code binary honours `BUN_OPTIONS`, so the app hands every local Code session a
+  preload that forwards only our models to the provider (Anthropic-compatible subset of the Messages API,
+  effort mapped, thinking budget clamped, mid-conversation system messages folded). The key travels in the
+  session's environment and is scrubbed from it before the CLI's code runs; nothing the session spawns sees it.
+- Docs: `docs/custom-models.md`. Tests: `test-custom-models-main.mjs`, `test-custom-models-preload.mjs`.
+
 ## 2026-09-10 (later)
 
 ### Launcher: five dead Chromium arguments removed, and the titlebar decision left to the app

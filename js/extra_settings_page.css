@@ -701,3 +701,26 @@
 .cdbx-toast.cdbx-toast-bad {
   border-color: color-mix(in srgb, #e5484d 60%, transparent);
 }
+
+/* --- Custom models panel ------------------------------------------------- */
+.cdbx-models-card {
+  margin: 8px 0 14px;
+  padding: 4px 0 8px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 10px;
+}
+.cdbx-models-card > .cdbx-row { border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
+.cdbx-models-locked { opacity: 0.8; }
+.cdbx-models-list { margin: 0 8px; }
+.cdbx-models-add { margin: 8px 12px 0; }
+.cdbx-models-warn { color: color-mix(in srgb, #e0a030 70%, currentColor); }
+.cdbx-models-form {
+  margin: 8px 12px;
+  padding: 6px 0 8px;
+  border: 1px dashed color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 8px;
+}
+.cdbx-models-field .cdbx-row-aside { min-width: 280px; }
+.cdbx-models-field .cdbx-input, .cdbx-models-field .cdbx-select { width: 100%; max-width: 100%; }
+.cdbx-models-actions { display: flex; gap: 10px; align-items: center; padding: 6px 12px 0; }
+.cdbx-models-files { margin-top: 10px; }

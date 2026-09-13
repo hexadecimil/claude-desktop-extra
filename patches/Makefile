@@ -94,6 +94,12 @@ community/add_feature_files_quick_open: \
 
 community/add_feature_files_quick_open_bridge: ../js/files_quick_open_bridge.js
 
+# Custom models: the main-process module embeds the Claude Code preload (the
+# CLI half) via staticRead, so a change to either has to rebuild the binary.
+community/add_feature_custom_models: \
+  ../js/custom_models_main.js \
+  ../js/custom_models_preload.js
+
 # Theme patch embeds the spinner-reshape installer (swaps the loading-star SVG
 # for the active theme's custom shape) and the bundled community + gaming palette
 # collections via staticRead.

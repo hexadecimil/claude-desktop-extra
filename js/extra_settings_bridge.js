@@ -122,6 +122,47 @@
       return ipcRenderer.invoke("cdb-qopen:pref-set", enabled === true);
     },
 
+    // Custom models (Anthropic-compatible endpoints in the Code model picker).
+    // BOTH channels are owned by patches/community/add_feature_custom_models.nim,
+    // not by the settings patch - the same cross-patch arrangement as
+    // panelTabsRead/Set. set() takes a plain boolean and the main side
+    // re-validates the type; the model list itself is only editable in the
+    // .jsonc for now.
+    customModelsRead: function () {
+      return ipcRenderer.invoke("cdb-cm:pref-read");
+    },
+    customModelsSet: function (enabled) {
+      return ipcRenderer.invoke("cdb-cm:pref-set", enabled === true);
+    },
+    // The Models panel: the full configuration (never a key value), and the
+    // edits it makes. Each call carries plain data; the main side validates
+    // every field and refuses a provider that lives in the hand-edited .jsonc.
+    customModelsConfig: function () {
+      return ipcRenderer.invoke("cdb-cm:config-read");
+    },
+    customModelsProviderSet: function (provider) {
+      return ipcRenderer.invoke("cdb-cm:provider-set", provider && typeof provider === "object" ? {
+        id: String(provider.id || ""), baseUrl: String(provider.baseUrl || ""),
+        apiKey: String(provider.apiKey || ""), webSearch: String(provider.webSearch || "")
+      } : {});
+    },
+    customModelsProviderDelete: function (id) {
+      return ipcRenderer.invoke("cdb-cm:provider-delete", String(id || ""));
+    },
+    customModelsModelSet: function (providerId, model) {
+      return ipcRenderer.invoke("cdb-cm:model-set", String(providerId || ""), model && typeof model === "object" ? {
+        id: String(model.id || ""), name: String(model.name || ""), description: String(model.description || ""),
+        badge: String(model.badge || ""), thinking: model.thinking !== false, vision: model.vision !== false,
+        context1m: model.context1m === true, effortDefault: String(model.effortDefault || "")
+      } : {});
+    },
+    customModelsModelDelete: function (providerId, modelId) {
+      return ipcRenderer.invoke("cdb-cm:model-delete", String(providerId || ""), String(modelId || ""));
+    },
+    customModelsTest: function (id) {
+      return ipcRenderer.invoke("cdb-cm:provider-test", String(id || ""));
+    },
+
     // Frameless main window, no window-control buttons, no shadow. BOTH channels
     // are owned by patches/community/add_feature_window_controls.nim, not by the
     // settings patch - the same cross-patch arrangement as panelTabsRead/Set.

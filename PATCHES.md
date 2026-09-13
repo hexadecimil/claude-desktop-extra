@@ -18,7 +18,7 @@ Each row below says what a patch does and why you would want it. The mechanism -
 
 ## Community features
 
-**10 patches**, each with a switch in Settings → **Extra** → **Community Features**. They reshape first-party surfaces, so they are asked for rather than assumed: turning one off is a full retreat to upstream's own behavior. Off by default, except the theme picker.
+**11 patches**, each with a switch in Settings → **Extra** → **Community Features**. They reshape first-party surfaces, so they are asked for rather than assumed: turning one off is a full retreat to upstream's own behavior. Off by default, except the theme picker.
 
 | Patch | What it does & why it exists |
 |-------|------------------------------|
@@ -32,6 +32,7 @@ Each row below says what a patch does and why you would want it. The mechanism -
 | [`add_feature_files_quick_open_bridge.nim`](patches/community/add_feature_files_quick_open_bridge.nim) | The narrow preload bridge the quick-open box talks through: one fixed channel per call, because the page behind it is remote code |
 | [`add_feature_files_quick_open_worker.nim`](patches/community/add_feature_files_quick_open_worker.nim) | Teaches Anthropic's fuzzy file index VS Code's space-separated pieces - `user service` finds `user-service.spec.ts`, in any word order. Upstream treats the space as a character to find and returns nothing. Also fixes the Files panel's own filter and the composer's `@` picker. Gated by an env var read at worker start, so flipping the switch reaches the file index on its next start (after a restart) |
 | [`add_feature_window_controls.nim`](patches/community/add_feature_window_controls.nim) | Backs the two titlebar switches - **Hide window controls** and **Native titlebar** - with a persisted config key each, so the window shape is a setting rather than a launcher flag. Hiding the controls is the only way from inside the app to remove the thin border Chromium paints inside frameless windows on xfwm4, i3 and Awesome ([electron#52024](https://github.com/electron/electron/issues/52024)): it drops the controls overlay and the shadow together, which is what stops Chromium painting it. Both are read when the main window is created, so they take effect on the next start |
+| [`add_feature_custom_models.nim`](patches/community/add_feature_custom_models.nim) | Lists models served by an Anthropic-compatible endpoint (DeepSeek's `/anthropic` API, a gateway) in the Code tab's model picker next to Anthropic's own, and sends the sessions that pick one to that endpoint with your key - the subscription and every Claude model stay untouched, unlike the exclusive 3P mode. The picker is fed by patching the `/api/bootstrap` response the page builds its menu from, the routing by a Bun preload the app hands the Claude Code binary. Providers, keys and models are edited in Settings → Extra → **Models** (or by hand in `claude-desktop-extra.jsonc`); see [`docs/custom-models.md`](docs/custom-models.md) |
 
 Panel tabs and Files quick open depend on DOM anchors in remote claude.ai code; they are inventoried with re-derivation recipes in [`baseline/PANEL_TABS_ANCHORS.md`](baseline/PANEL_TABS_ANCHORS.md) and [`baseline/FILES_QUICK_OPEN_ANCHORS.md`](baseline/FILES_QUICK_OPEN_ANCHORS.md) and re-validated on each upstream bump.
 

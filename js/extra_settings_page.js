@@ -509,6 +509,15 @@
     ["circle", { cx: "7.2", cy: "16.9", r: "1.5" }, SOLID]
   ];
 
+  // A model picker with one extra row appended: three rows in a list, the
+  // last one marked - the custom model next to Anthropic's own.
+  var ICON_MODELS = [
+    ["rect", { x: "3.2", y: "3.4", width: "17.6", height: "4.6", rx: "1.6" }, STROKE],
+    ["rect", { x: "3.2", y: "9.7", width: "17.6", height: "4.6", rx: "1.6" }, STROKE],
+    ["rect", { x: "3.2", y: "16", width: "17.6", height: "4.6", rx: "1.6" }, STROKE],
+    ["circle", { cx: "17.4", cy: "18.3", r: "1.5" }, SOLID]
+  ];
+
   // The rows of our nav group, in render order. Everything that builds, binds or
   // dispatches them iterates THIS list, so a new panel is one entry plus one
   // render function.
@@ -517,6 +526,7 @@
     // Short labels: upstream's nav column is narrow and truncates anything
     // longer, so the full name lives in a tooltip and in the panel's own h1.
     { kind: "features", label: "Community", icon: ICON_FEATURES, tooltip: "Community Features" },
+    { kind: "models", label: "Models", icon: ICON_MODELS, tooltip: "Custom models" },
     { kind: "flags", label: "Anthropic", icon: ICON_FLAGS, tooltip: "Anthropic Features" },
     { kind: "deploy", label: "Deployment", icon: ICON_DEPLOY }
   ];
@@ -1238,6 +1248,48 @@
     });
   }
 
+  // --- models: custom models in the Code picker ------------------------------
+  // Ours, applies to the next bootstrap of the page (a reload or a restart of
+  // the app) and to sessions started after the flip. The switch only ever
+  // toggles `customModels.enabled`; the providers and models themselves live in
+  // the hand-edited .jsonc for now, so the state line says how many it found
+  // and the row refuses to turn on when there is nothing to list.
+  function renderCustomModelsRow(panel) {
+    return renderToggleRow(panel, {
+      section: "Models",
+      title: "Custom models",
+      note: "Lists models served by an Anthropic-compatible endpoint - DeepSeek's /anthropic API, " +
+        "a gateway - in the Code tab's model picker, next to Anthropic's own, and sends the " +
+        "sessions that pick one to that endpoint with your own key. Everything else keeps going " +
+        "to Anthropic on your subscription. The providers and models come from the customModels " +
+        "key of claude-desktop-extra.jsonc (see docs/custom-models.md); this switch only turns the " +
+        "whole thing off and on. Applies live - no restart: the Code tab lists them on its next " +
+        "reload, and sessions started after that use them.",
+      ariaLabel: "list custom Anthropic-compatible models in the Code model picker",
+      read: "customModelsRead",
+      write: "customModelsSet",
+      lockFile: "claude-desktop-extra.jsonc",
+      isOn: function (res) { return res.enabled === true; },
+      describe: function (on, res) {
+        if (!res || res.configured !== true) return "off - no customModels.providers configured";
+        var n = typeof res.models === "number" ? res.models : 0;
+        var noKey = (res.providers || []).filter(function (p) { return p && p.keyOk !== true; })
+          .map(function (p) { return p.id; });
+        var what = n + " model" + (n === 1 ? "" : "s") + " from " + (res.providers || []).length +
+          " provider" + ((res.providers || []).length === 1 ? "" : "s") +
+          (noKey.length ? " (no API key for " + noKey.join(", ") + ")" : "");
+        return on ? "on - " + what : "off - " + what + " configured";
+      },
+      writeArg: function (next) { return next; },
+      toast: function (next) {
+        return next
+          ? "Custom models on - reload the Code tab to see them in the picker"
+          : "Custom models off - the picker is stock again on the next reload";
+      },
+      errorPrefix: "Could not change custom models: "
+    });
+  }
+
   // --- window: the three window modes ---------------------------------------
   // Two switches, three mutually exclusive outcomes, resolved by the main side
   // as: native titlebar > no window controls > integrated titlebar (default).
@@ -1889,6 +1941,7 @@
     renderDiffViewsRow,
     renderPanelTabsRow,
     renderFilesQuickOpenRow,
+    renderCustomModelsRow,
     renderWindowControlsRow,
     renderNativeTitlebarRow,
     renderGlowRow,
@@ -1974,6 +2027,381 @@
   // Anthropic's own GrowthBook flags. Nothing here applies live: the app reads
   // most of them once at startup, so this panel carries the restart notice the
   // Community Features panel does not need.
+
+  // --- models: Anthropic-compatible endpoints in the Code picker -------------
+  // The editor behind the "Custom models" switch of Community Features: the
+  // providers (endpoint + key) and the models each one serves. Everything the
+  // panel writes goes to claude-desktop-extra.json, except the key, which the
+  // main side keeps in a 0600 secrets file and never sends back here - the
+  // field is write-only, like the Deployment panel's credentials. A provider
+  // that lives in the hand-edited .jsonc is shown locked.
+  var EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+
+  function renderModels(panel) {
+    clear(panel);
+    panel.appendChild(el("div", "cdbx-h1", "Custom models"));
+    panel.appendChild(el("div", "cdbx-sub",
+      "Models served by an Anthropic-compatible endpoint - DeepSeek's /anthropic API, a gateway - listed " +
+      "in the Code tab's model picker next to Anthropic's own. A session that picks one talks to that " +
+      "endpoint with your key; everything else keeps going to Anthropic on your subscription. Sub-agents " +
+      "and workflows can name them too, as claude-<model id>."));
+
+    if (!api || typeof api.customModelsConfig !== "function") {
+      panel.appendChild(el("div", "cdbx-error",
+        "This build's preload does not expose the custom models bridge - reinstall to pick it up."));
+      return;
+    }
+
+    var status = el("div", "cdbx-empty", "Reading the configuration...");
+    panel.appendChild(status);
+    api.customModelsConfig().then(function (state) {
+      if (failed(state)) {
+        status.className = "cdbx-error";
+        status.textContent = "The configuration is unavailable: " + reason(state);
+        return;
+      }
+      status.remove();
+      drawModels(panel, state);
+    }, function (err) {
+      status.className = "cdbx-error";
+      status.textContent = "The configuration is unavailable: " + (err && err.message ? err.message : String(err));
+    });
+  }
+
+  function drawModels(panel, state) {
+    var host = el("div", "cdbx-models");
+    panel.appendChild(host);
+
+    // Every write comes back with the fresh state, so the panel simply
+    // redraws from what the main side reports rather than patching the DOM.
+    function refresh(res) {
+      if (failed(res)) { toast("Could not save: " + reason(res), true); return false; }
+      clear(host);
+      draw(res);
+      return true;
+    }
+    function call(name) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return api[name].apply(api, args).then(refresh, function (err) {
+        toast("Could not save: " + (err && err.message ? err.message : String(err)), true);
+        return false;
+      });
+    }
+
+    function draw(st) {
+      // --- status line + the switch, mirrored from Community Features -------
+      var stateLine = el("div", "cdbx-state");
+      var n = st.models;
+      var usable = (st.providers || []).filter(function (p) { return p.models.length; }).length;
+      if (!st.configured) {
+        stateLine.textContent = "No model configured yet - add a provider and a model below.";
+      } else if (st.enabled) {
+        stateLine.textContent = "On - " + n + " model" + (n === 1 ? "" : "s") + " from " + usable +
+          " provider" + (usable === 1 ? "" : "s") + " in the Code picker" +
+          (st.lockedByJsonc ? " (switch set in claude-desktop-extra.jsonc)" : "");
+      } else {
+        stateLine.textContent = "Off - " + n + " model" + (n === 1 ? "" : "s") + " configured but not listed" +
+          (st.lockedByJsonc ? " (switch set in claude-desktop-extra.jsonc)" : "");
+      }
+      host.appendChild(stateLine);
+      if (st.configured && !st.lockedByJsonc) {
+        var flip = el("button", "cdbx-btn", st.enabled ? "Turn off" : "Turn on");
+        flip.type = "button";
+        flip.addEventListener("click", function () {
+          flip.disabled = true;
+          api.customModelsSet(!st.enabled).then(function (r) {
+            if (failed(r)) { flip.disabled = false; toast("Could not change custom models: " + reason(r), true); return; }
+            toast(st.enabled ? "Custom models off - the picker is stock again on the next reload"
+              : "Custom models on - reload the Code tab to see them in the picker");
+            call("customModelsConfig");
+          });
+        });
+        host.appendChild(flip);
+      }
+
+      // --- providers ----------------------------------------------------------
+      var h = el("div", "cdbx-sec-h");
+      h.appendChild(el("span", "cdbx-sec-t", "Providers"));
+      h.appendChild(el("span", "cdbx-sec-n", String((st.providers || []).length)));
+      host.appendChild(h);
+      if (!(st.providers || []).length) {
+        host.appendChild(el("div", "cdbx-empty", "None yet."));
+      }
+      (st.providers || []).forEach(function (p) { host.appendChild(providerCard(p, st)); });
+
+      // --- add a provider -------------------------------------------------------
+      var h2 = el("div", "cdbx-sec-h");
+      h2.appendChild(el("span", "cdbx-sec-t", "Add a provider"));
+      host.appendChild(h2);
+      host.appendChild(providerForm(null, st));
+
+      var files = el("div", "cdbx-note cdbx-models-files",
+        "Written to " + (st.paths && st.paths.json) + "; keys to " + (st.paths && st.paths.secrets) +
+        " (0600). A provider in " + (st.paths && st.paths.jsonc) + " is shown locked - edit that file to change it. " +
+        "Changes reach the picker on the next reload of the Code tab and sessions started after that.");
+      host.appendChild(files);
+    }
+
+    function providerCard(p, st) {
+      var card = el("div", "cdbx-models-card" + (p.locked ? " cdbx-models-locked" : ""));
+      var head = el("div", "cdbx-row");
+      var main = el("div", "cdbx-row-main");
+      main.appendChild(el("div", "cdbx-id", p.id + (p.locked ? " - set in claude-desktop-extra.jsonc" : "")));
+      main.appendChild(el("div", "cdbx-note", p.baseUrl));
+      var keyLine = p.keyOk
+        ? "API key: " + ({ value: "in the config file", env: "from the environment", file: "from a key file", stored: "stored" })[p.keySource]
+        : "API key: MISSING - sessions on these models fail until one is set";
+      main.appendChild(el("div", "cdbx-state" + (p.keyOk ? "" : " cdbx-models-warn"), keyLine +
+        (p.webSearch ? " - web search on " + p.webSearch : "")));
+      head.appendChild(main);
+      var aside = el("div", "cdbx-row-aside");
+      var test = el("button", "cdbx-clear", "test");
+      test.type = "button";
+      test.title = "Send one token to the first model with the stored key";
+      test.disabled = !p.keyOk || !p.models.length;
+      test.addEventListener("click", function () {
+        test.disabled = true;
+        test.textContent = "testing...";
+        api.customModelsTest(p.id).then(function (r) {
+          test.disabled = false;
+          test.textContent = "test";
+          if (failed(r)) toast("Provider " + p.id + ": " + reason(r), true);
+          else toast("Provider " + p.id + " answered (" + r.model + ", HTTP " + r.status + ")");
+        }, function (err) {
+          test.disabled = false;
+          test.textContent = "test";
+          toast("Provider " + p.id + ": " + (err && err.message ? err.message : String(err)), true);
+        });
+      });
+      aside.appendChild(test);
+      if (!p.locked) {
+        var edit = el("button", "cdbx-clear", "edit");
+        edit.type = "button";
+        edit.addEventListener("click", function () {
+          if (card.querySelector(".cdbx-models-form")) return;
+          card.appendChild(providerForm(p, st));
+        });
+        aside.appendChild(edit);
+        var del = el("button", "cdbx-clear", "remove");
+        del.type = "button";
+        del.addEventListener("click", function () {
+          if (!del.classList.contains("cdbx-armed")) {
+            del.classList.add("cdbx-armed");
+            del.textContent = "remove?";
+            setTimeout(function () { del.classList.remove("cdbx-armed"); del.textContent = "remove"; }, 4000);
+            return;
+          }
+          call("customModelsProviderDelete", p.id).then(function (okd) {
+            if (okd) toast("Provider " + p.id + " removed");
+          });
+        });
+        aside.appendChild(del);
+      }
+      head.appendChild(aside);
+      card.appendChild(head);
+
+      // models of this provider
+      var list = el("div", "cdbx-list cdbx-models-list");
+      if (!p.models.length) list.appendChild(el("div", "cdbx-empty", "No model yet - the provider is idle until one is added."));
+      p.models.forEach(function (m) {
+        var row = el("div", "cdbx-row");
+        var rm = el("div", "cdbx-row-main");
+        rm.appendChild(el("div", "cdbx-id", m.name + (m.name !== m.id ? "  (" + m.id + ")" : "")));
+        var traits = [];
+        traits.push("in the picker as " + m.alias);
+        traits.push(m.thinking ? "thinking, default effort " + m.effortDefault : "no thinking");
+        traits.push(m.vision ? "images" : "no images");
+        if (m.context1m) traits.push("1M twin");
+        if (m.badge) traits.push("badge \"" + m.badge + "\"");
+        rm.appendChild(el("div", "cdbx-note", traits.join(" - ")));
+        row.appendChild(rm);
+        if (!p.locked) {
+          var ra = el("div", "cdbx-row-aside");
+          var me = el("button", "cdbx-clear", "edit");
+          me.type = "button";
+          me.addEventListener("click", function () {
+            if (row.querySelector(".cdbx-models-form")) return;
+            row.appendChild(modelForm(p, m));
+          });
+          ra.appendChild(me);
+          var md = el("button", "cdbx-clear", "remove");
+          md.type = "button";
+          md.addEventListener("click", function () {
+            call("customModelsModelDelete", p.id, m.id).then(function (okd) {
+              if (okd) toast("Model " + m.id + " removed from " + p.id);
+            });
+          });
+          ra.appendChild(md);
+          row.appendChild(ra);
+        }
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+      if (!p.locked) {
+        var add = el("button", "cdbx-btn cdbx-models-add", "Add a model");
+        add.type = "button";
+        add.addEventListener("click", function () {
+          if (card.querySelector(".cdbx-models-form-model-new")) return;
+          var f = modelForm(p, null);
+          f.classList.add("cdbx-models-form-model-new");
+          card.insertBefore(f, add);
+        });
+        card.appendChild(add);
+      }
+      return card;
+    }
+
+    function field(form, label, control, note) {
+      var row = el("div", "cdbx-row cdbx-models-field");
+      var main = el("div", "cdbx-row-main");
+      main.appendChild(el("div", "cdbx-id", label));
+      if (note) main.appendChild(el("div", "cdbx-note", note));
+      row.appendChild(main);
+      var aside = el("div", "cdbx-row-aside");
+      aside.appendChild(control);
+      row.appendChild(aside);
+      form.appendChild(row);
+      return control;
+    }
+    function input(type, value, placeholder) {
+      var c = el("input", "cdbx-input");
+      c.type = type;
+      c.value = value || "";
+      if (placeholder) c.placeholder = placeholder;
+      c.autocomplete = "off";
+      c.spellcheck = false;
+      return c;
+    }
+    function checkbox(checked) {
+      var c = el("input");
+      c.type = "checkbox";
+      c.checked = !!checked;
+      return c;
+    }
+
+    // Add (existing === null) or edit a provider. The key field is write-only:
+    // empty keeps whatever is stored.
+    function providerForm(existing, st) {
+      var form = el("div", "cdbx-models-form");
+      var preset = null;
+      if (!existing && st.presets && st.presets.length) {
+        preset = el("select", "cdbx-select");
+        var none = el("option", "", "pick a preset or fill in by hand");
+        none.value = "";
+        preset.appendChild(none);
+        st.presets.forEach(function (pr) {
+          var o = el("option", "", pr.label + " - " + pr.baseUrl);
+          o.value = pr.id;
+          preset.appendChild(o);
+        });
+        field(form, "Preset", preset, "Prefills the fields below; everything stays editable.");
+      }
+      var id = field(form, "Provider id", input("text", existing ? existing.id : "", "deepseek"),
+        "Short name used in logs and the Settings state line. Letters, digits, - and _.");
+      if (existing) id.disabled = true;
+      var url = field(form, "Base URL", input("text", existing ? existing.baseUrl : "", "https://api.deepseek.com/anthropic"),
+        "The Anthropic-compatible endpoint; /v1/messages is appended.");
+      var key = field(form, "API key", input("password", "", existing && existing.keyOk ? "stored - type to replace" : "sk-..."),
+        "Stored in a 0600 file in this profile, never shown again, sent only to that endpoint.");
+      var ws = field(form, "Web search model", input("text", existing ? existing.webSearch : "", "optional, e.g. deepseek-flash"),
+        "Optional: the CLI's web-search sub-request (normally a small Claude model) goes to this model of the provider instead.");
+      if (preset) {
+        preset.addEventListener("change", function () {
+          var pr = null;
+          st.presets.forEach(function (x) { if (x.id === preset.value) pr = x; });
+          if (!pr) return;
+          id.value = pr.id;
+          url.value = pr.baseUrl;
+          key.placeholder = pr.keyHint || "sk-...";
+          if (pr.models && pr.models.length) ws.value = pr.models[0].id;
+        });
+      }
+      var actions = el("div", "cdbx-models-actions");
+      var save = el("button", "cdbx-btn", existing ? "Save" : "Add provider");
+      save.type = "button";
+      save.addEventListener("click", function () {
+        save.disabled = true;
+        var payload = { id: id.value, baseUrl: url.value, apiKey: key.value, webSearch: ws.value };
+        var pr = null;
+        if (preset && preset.value) st.presets.forEach(function (x) { if (x.id === preset.value) pr = x; });
+        api.customModelsProviderSet(payload).then(function (r) {
+          if (failed(r)) { save.disabled = false; toast("Could not save: " + reason(r), true); return; }
+          // A preset also brings its models along on first creation, so a
+          // provider is usable right after one Add click.
+          if (!existing && pr && pr.models) {
+            var chain = Promise.resolve(r);
+            pr.models.forEach(function (m) {
+              chain = chain.then(function () { return api.customModelsModelSet(payload.id.trim(), m); });
+            });
+            return chain.then(function (last) { refresh(last); toast("Provider " + payload.id.trim() + " added with " + pr.models.length + " model(s)"); });
+          }
+          refresh(r);
+          toast(existing ? "Provider " + existing.id + " saved" : "Provider " + payload.id.trim() + " added - now add a model to it");
+        }, function (err) {
+          save.disabled = false;
+          toast("Could not save: " + (err && err.message ? err.message : String(err)), true);
+        });
+      });
+      actions.appendChild(save);
+      if (existing) {
+        var cancel = el("button", "cdbx-clear", "cancel");
+        cancel.type = "button";
+        cancel.addEventListener("click", function () { form.remove(); });
+        actions.appendChild(cancel);
+      }
+      form.appendChild(actions);
+      return form;
+    }
+
+    // Add (existing === null) or edit a model of provider p.
+    function modelForm(p, existing) {
+      var form = el("div", "cdbx-models-form");
+      var id = field(form, "Model id", input("text", existing ? existing.id : "", "deepseek-flash"),
+        "The provider's own id. The app and the CLI see it as claude-<id>.");
+      if (existing) id.disabled = true;
+      var name = field(form, "Display name", input("text", existing ? (existing.name !== existing.id ? existing.name : "") : "", "DeepSeek Flash"),
+        "What the picker shows.");
+      var desc = field(form, "Description", input("text", existing ? existing.description : "", "optional subtitle"),
+        "Optional line under the name. Anthropic's own entries have none.");
+      var thinking = field(form, "Thinking", checkbox(existing ? existing.thinking : true),
+        "Off: no effort menu, thinking never requested.");
+      var effort = el("select", "cdbx-select");
+      EFFORT_LEVELS.forEach(function (lv) {
+        var o = el("option", "", lv);
+        o.value = lv;
+        effort.appendChild(o);
+      });
+      effort.value = existing && existing.effortDefault ? existing.effortDefault : "xhigh";
+      field(form, "Default effort", effort, "The level the picker preselects. xhigh reaches DeepSeek as max (its benchmark setting).");
+      var vision = field(form, "Images", checkbox(existing ? existing.vision : true),
+        "Off: images are replaced by a placeholder line before the request leaves.");
+      var context1m = field(form, "1M twin", checkbox(existing ? existing.context1m : false),
+        "Also list a \"<name> 1M\" entry, the way Sonnet/Opus 1M are listed. Pointless for a model whose context is 1M natively.");
+      var badge = field(form, "Badge", input("text", existing ? existing.badge : "", "optional, e.g. beta"),
+        "Optional neutral badge next to the name.");
+      var actions = el("div", "cdbx-models-actions");
+      var save = el("button", "cdbx-btn", existing ? "Save" : "Add model");
+      save.type = "button";
+      save.addEventListener("click", function () {
+        save.disabled = true;
+        var payload = { id: id.value, name: name.value, description: desc.value, badge: badge.value,
+          thinking: thinking.checked, vision: vision.checked, context1m: context1m.checked, effortDefault: effort.value };
+        call("customModelsModelSet", p.id, payload).then(function (okd) {
+          if (!okd) save.disabled = false;
+          else toast(existing ? "Model " + existing.id + " saved" : "Model " + payload.id.trim() + " added to " + p.id);
+        });
+      });
+      actions.appendChild(save);
+      var cancel = el("button", "cdbx-clear", "cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", function () { form.remove(); });
+      actions.appendChild(cancel);
+      form.appendChild(actions);
+      return form;
+    }
+
+    draw(state);
+  }
 
   function renderFlags(panel) {
     clear(panel);
@@ -2834,6 +3262,7 @@
   var PANELS = {
     themes: renderThemes,
     features: renderFeatures,
+    models: renderModels,
     flags: renderFlags,
     deploy: renderDeploy
   };

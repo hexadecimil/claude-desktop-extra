@@ -20,7 +20,7 @@ Anthropic publishes an official Claude Desktop [Linux `.deb`](https://code.claud
 - [**Multiple Profiles**](#multiple-profiles) - run several instances side by side, each logged in to a different account with fully isolated state.
 - [**Quick Entry**](#quick-entry) - global hotkey popup (Ctrl+Alt+Space), multi-monitor and Wayland-aware.
 - [**Hardware Buddy**](docs/feature-flags.md) - enables the Nibblet BLE pet device on Linux: forces the feature flag so the BLE transport arms, and turns on Chromium Web Bluetooth (via BlueZ) so the in-app scan can find the device - both are off by default upstream on Linux.
-- [**[...]**](PATCHES.md#community-features) - and more: panel tabs, diff view modes, a calmer Cowork glow, upstream feature-flag switches - each with its own toggle under Settings → **Extra**, and the list keeps growing ([add your own](PATCHES.md#adding-your-own-feature)).
+- [**[...]**](PATCHES.md#community-features) - and more: custom models (DeepSeek and other Anthropic-compatible endpoints) in the Code picker, panel tabs, diff view modes, a calmer Cowork glow, upstream feature-flag switches - each with its own toggle under Settings → **Extra**, and the list keeps growing ([add your own](PATCHES.md#adding-your-own-feature)).
 
 Everything else - Chat, Cowork, Claude Code, Browser Tools, 3P/enterprise inference - is the **official upstream build**, preserved through the repackage. Where its shared cross-platform bundle still gates a feature to macOS/Windows or misbehaves on a Linux desktop, we ship a **Linux fix** (see [PATCHES.md](PATCHES.md) - each entry states exactly why it exists).
 
@@ -288,8 +288,10 @@ This package adds its own section to Claude's Settings dialog: **Extra** - the h
 Four panels today:
 
 - **Extra → Themes** - all **97 bundled palettes** with live color dots; one click applies instantly in every open window. Make Claude Desktop blend into your Linux desktop: palettes matching stock DE looks (ADW/Adwaita, Breeze) sit next to the classics (Catppuccin, Nord, Gruvbox, Rose Pine, Everforest) and a [Gaming collection](docs/themes.md).
-- **Extra → Community Features** - the **5 optional features** this project currently adds, each as a switch ([9 patches](PATCHES.md#community-features): Files quick open, panel tabs, diff view modes, the theme-picker hotkey, a calmer Cowork glow), with a filter box over them.
+- **Extra → Community Features** - the **6 optional features** this project currently adds, each as a switch ([11 patches](PATCHES.md#community-features): custom models in the Code picker, Files quick open, panel tabs, diff view modes, the theme-picker hotkey, a calmer Cowork glow), with a filter box over them.
+  - **Custom models** - lists models served by an Anthropic-compatible endpoint (DeepSeek's `/anthropic` API, a gateway) in the Code tab's model picker, next to Anthropic's own, and sends the sessions that pick one to that endpoint with your key. Additive: the subscription login and every Claude model stay as they are, unlike the exclusive 3P mode. Providers, keys and models are edited in Settings → Extra → Models (or by hand in `claude-desktop-extra.jsonc`); see [docs/custom-models.md](docs/custom-models.md).
   - **Files quick open** - <kbd>Ctrl</kbd>+<kbd>P</kbd> on the Code tab opens a VS Code-style quick-open box over the Files panel. Type part of a name - spaces split the query into pieces that must all match, in any order, so `user service` finds `user-service.spec.ts` - pick with the arrow keys or the mouse, and <kbd>Enter</kbd> opens it as a file tab in the panel; `:42` jumps to a line, an empty query lists what you opened recently. The same fix reaches the Files panel's own filter and the composer's `@` file picker. Opt-in: Settings → Extra → Community Features - the hotkey applies live, the spaces fix reaches the file index on its next start (after a restart).
+- **Extra → Models** - the editor behind the custom models switch: providers (endpoint + key, a DeepSeek preset, a one-token connectivity test) and the models each one serves in the Code picker. Keys go to a 0600 secrets file in the profile and are never shown again.
 - **Extra → Anthropic Features** - all **134 upstream [feature flags](#feature-flag-overrides-advanced)** this build reads, each as a switch - no config-file editing needed.
 - **Extra → Deployment** - a **1P / 3P switch** plus the whole [third-party inference](#third-party--enterprise-inference) configuration as toggles and fields. Turning 3P on used to be a one-way door without a root shell; here it is a button, and every value is written to your own profile directory.
 
@@ -351,7 +353,7 @@ The official 3P docs cover only macOS and Windows. **[docs/third-party-inference
 
 The official Linux build ships one cross-platform JS bundle that gates plenty of features to macOS and Windows, and some of its behavior misfires on a Linux desktop. We apply a set of surgical JS patches to the `app.asar` at repackage time - one directory per purpose:
 
-- **[`patches/community/`](PATCHES.md#community-features)** (10 patches) - optional features you switch on yourself in Settings → **Extra** → **Community Features**. Off unless you ask for them (the theme picker is the exception, on by default).
+- **[`patches/community/`](PATCHES.md#community-features)** (11 patches) - optional features you switch on yourself in Settings → **Extra** → **Community Features**. Off unless you ask for them (the theme picker is the exception, on by default).
 - **[`patches/core/`](PATCHES.md#core-infrastructure)** (7 patches) - always-on infrastructure the rest builds on: the Extra settings pages themselves, the theme engine, the flag-override mechanism, and the multi-profile plumbing.
 - **[`patches/linux/`](PATCHES.md#linux-compatibility)** (31 patches) - upstream features still gated to macOS/Windows in the shared bundle, or that break in a Linux environment. Always on, nothing to configure.
 
