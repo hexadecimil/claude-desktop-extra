@@ -38,7 +38,12 @@ login and every Claude model stay as they are, unlike the exclusive 3P mode.
   token forever); a turn answered by a model whose message ids are not Anthropic's no longer breaks the
   next Anthropic request (`diagnostics.previous_message_id` is sent as null then). The test result stays
   on the provider's card and no panel button is ever mute.
-- Docs: `docs/custom-models.md`. Tests: `test-custom-models-main.mjs`, `test-custom-models-preload.mjs`.
+- Routing is live: the app rewrites `custom-models/routes.json` (0600) at every change and every open session
+  re-reads it on its next request - a key fixed, a model added, a provider removed, the switch, all without
+  a restart. The picker still comes from the page's bootstrap: a **Reload the Code tab** button in the panel
+  refreshes it. Only a session opened before the very first provider existed needs the app restarted.
+- Docs: `docs/custom-models.md`. Tests: `test-custom-models-main.mjs`, `test-custom-models-preload.mjs`,
+  `test-extra-settings-bridge.mjs`.
 
 ## 2026-09-10 (later)
 

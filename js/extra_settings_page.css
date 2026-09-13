@@ -731,4 +731,5 @@
 .cdbx-models-fetched .cdbx-models-actions { padding: 6px 0 0; }
 .cdbx-models-fetched .cdbx-models-filter { margin: 2px 0 6px; max-width: 320px; }
 .cdbx-models-testline { margin-top: 4px; }
+.cdbx-models-reload { margin-left: 8px; }
 .cdbx-models-fetched { max-height: 360px; overflow-y: auto; }

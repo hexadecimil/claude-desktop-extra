@@ -6,7 +6,7 @@
  * which skips the Bun/execPath gates and exports its internals. Every check
  * is about what leaves the process: which URL, which headers, which body.
  */
-import { readFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -222,6 +222,58 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
   await h4(ANTHROPIC, messagesInit({ model: "claude-opus-5", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }));
   ok(JSON.parse(c4[1].init.body).model === "claude-opus-5" && c4[1].init.body === messagesInit({ model: "claude-opus-5", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }).body,
      "a normal Opus request is not rewritten");
+}
+
+// --- live routes: the routes file wins over the environment and is re-read -------
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-cm-routes-"));
+  const rp = join(dir, "routes.json");
+  const write = (cfg, mtimeSec) => { writeFileSync(rp, JSON.stringify(cfg, null, 2) + "\n"); utimesSync(rp, mtimeSec, mtimeSec); };
+  const gwOnly = { providers: [{ id: "gw", baseUrl: "https://gw.example/anthropic", apiKey: "sk-gw-1234567890", models: [{ id: "gw-model" }] }] };
+  write(gwOnly, 1700000000);
+  const { api, hooked, calls, env } = load(CONFIG, { env: { CDB_CUSTOM_MODELS_ROUTES: rp } });
+  ok(!("CDB_CUSTOM_MODELS_ROUTES" in env), "the routes path is deleted from process.env too");
+  ok(api.routes.size === 1 && api.routes.has("claude-gw-model") && !api.routes.has("claude-deepseek-flash"),
+     "at start the routes file (newer) wins over the environment's config");
+  const msg = (model) => messagesInit({ model, max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
+  await hooked(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(calls[0].url === ANTHROPIC, "a model the file does not list goes to Anthropic");
+  // The app rewrites the file (a provider added): the next request sees it.
+  write(CONFIG, 1700000010);
+  await hooked(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(calls[1].url === "https://api.deepseek.com/anthropic/v1/messages" && JSON.parse(calls[1].init.body).model === "deepseek-flash",
+     "a rewritten routes file is picked up on the next request - no restart");
+  ok(api.routes.size === 3, "every model of the new file is routed");
+  // A key replaced (same size, new mtime) is picked up as well.
+  const fixed = JSON.parse(JSON.stringify(CONFIG)); fixed.providers[0].apiKey = "sk-test-0987654321";
+  write(fixed, 1700000020);
+  await hooked(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(calls[2].init.headers.get("x-api-key") === "sk-test-0987654321", "a replaced key is used at once");
+  // Same content, same mtime: nothing re-read (the stamp is mtime+size).
+  await hooked(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(calls[3].init.headers.get("x-api-key") === "sk-test-0987654321", "an unchanged file changes nothing");
+  // The feature switched off: an empty list stops the routing here too.
+  write({ providers: [] }, 1700000030);
+  await hooked(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(calls[4].url === ANTHROPIC && api.routes.size === 0, "an emptied routes file stops the routing in this session");
+  // The file removed: same.
+  write(CONFIG, 1700000040);
+  await hooked(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(calls[5].url.startsWith("https://api.deepseek.com/"), "and back when it is written again");
+  rmSync(rp);
+  await hooked(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(calls[6].url === ANTHROPIC && api.routes.size === 0, "a removed routes file stops the routing");
+  // No config in the environment at all, only the file: the hook is installed.
+  write(CONFIG, 1700000050);
+  const { api: api2, hooked: h2, rawFetch: raw2, calls: c2 } = load(null, { env: { CDB_CUSTOM_MODELS_ROUTES: rp } });
+  ok(!!api2 && h2 !== raw2 && api2.routes.size === 3, "with only the routes path in the environment, fetch is hooked and the file read");
+  await h2(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(c2[0].url.startsWith("https://api.deepseek.com/"), "and routes");
+  // An unreadable file keeps the current routes.
+  writeFileSync(rp, "{not json"); utimesSync(rp, 1700000060, 1700000060);
+  await h2(ANTHROPIC, msg("claude-deepseek-flash"));
+  ok(c2[1].url.startsWith("https://api.deepseek.com/"), "a broken routes file keeps the routes in use");
+  rmSync(dir, { recursive: true, force: true });
 }
 
 // --- a foreign previous_message_id on the way to Anthropic ------------------------

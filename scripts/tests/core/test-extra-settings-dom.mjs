@@ -728,7 +728,7 @@ async function modelsPanel(modelsItem) {
     presets: [{ id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", keyHint: "sk-...",
       modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m" }],
     paths: { json: "/home/u/.config/Claude/claude-desktop-extra.json", jsonc: "/home/u/.config/Claude/claude-desktop-extra.jsonc",
-      secrets: "/home/u/.config/Claude/custom-models/secrets.json" },
+      secrets: "/home/u/.config/Claude/custom-models/secrets.json", routes: "/home/u/.config/Claude/custom-models/routes.json" },
     providers: [
       { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored", preset: "deepseek", modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m",
         models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", listedAs: ["claude-deepseek-flash[1m]"], name: "DeepSeek Flash", description: "", vision: true, thinking: true, context: "1m", effort: ["low", "high", "max"], effortDefault: "max", badge: "" }] },
@@ -744,6 +744,12 @@ async function modelsPanel(modelsItem) {
   ok(panel.querySelector(".cdbx-h1").textContent === "Custom models", "the heading spells the full name out");
   const state = panel.querySelector(".cdbx-state");
   ok(!!state && /^On - 2 models from 2 providers/.test(state.textContent), "the state line counts models and providers: " + (state && state.textContent));
+  const reloadBtn = panel.querySelector(".cdbx-models-reload");
+  ok(!!reloadBtn && reloadBtn.textContent === "Reload the Code tab" && /picker/.test(reloadBtn.title),
+     "a Reload the Code tab button sits next to the switch (the picker is drawn from the page's bootstrap)");
+  ok(/reach open sessions at once/.test(panel.querySelector(".cdbx-models-files").textContent) &&
+     /custom-models\/routes\.json/.test(panel.querySelector(".cdbx-models-files").textContent),
+     "the footer says routing is live and names the routes file");
   const cards = panel.querySelectorAll(".cdbx-models-card");
   ok(cards.length === 2, "one card per provider (" + cards.length + ")");
   if (cards.length !== 2) return;

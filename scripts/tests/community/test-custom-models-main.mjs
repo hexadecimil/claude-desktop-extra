@@ -314,6 +314,38 @@ function bootstrap() {
   ok(readFileSync(preloadPath, "utf8") === PRELOAD_STUB, "a stale preload is rewritten");
   const { api: api2 } = load(dir, {});
   ok(api2.cliEnv().BUN_OPTIONS === "--preload=" + preloadPath, "no prior BUN_OPTIONS: ours alone");
+  // Live routing: the routes file the open sessions re-read.
+  const routesPath = join(dir, "custom-models", "routes.json");
+  ok(env.CDB_CUSTOM_MODELS_ROUTES === routesPath, "the CLI is told where the routes file is");
+  ok(existsSync(routesPath) && (statSync(routesPath).mode & 0o777) === 0o600, "routes.json exists, 0600");
+  ok(readFileSync(routesPath, "utf8") === JSON.stringify(payload, null, 2) + "\n", "and holds exactly the CLI payload (keys included)");
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// --- live routing: every change rewrites routes.json ------------------------------
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-cm-main-"));
+  const { h, api } = load(dir);
+  const routesPath = join(dir, "custom-models", "routes.json");
+  const routes = () => JSON.parse(readFileSync(routesPath, "utf8"));
+  let r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "sk-secret-1234567890", preset: "deepseek" });
+  ok(r.ok === true && existsSync(routesPath) && routes().providers.length === 0, "a provider without a model: routes.json written, empty (nothing routable yet)");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash" });
+  ok(r.ok === true && routes().providers.length === 1 && routes().providers[0].apiKey === "sk-secret-1234567890" &&
+     routes().providers[0].models[0].id === "deepseek-flash", "adding a model rewrites it with the provider, its key and the model");
+  r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "sk-secret-0987654321" });
+  ok(r.ok === true && routes().providers[0].apiKey === "sk-secret-0987654321", "a replaced key reaches routes.json at once");
+  r = await h["cdb-cm:websearch-set"](okSenderEv, "deepseek-flash");
+  ok(r.ok === true && routes().webSearch === "claude-deepseek-flash", "so does the web-search target");
+  r = await h["cdb-cm:pref-set"](okSenderEv, false);
+  ok(r.ok === true && routes().providers.length === 0 && !("webSearch" in routes()), "switched off: the file is emptied, open sessions stop routing");
+  r = await h["cdb-cm:pref-set"](okSenderEv, true);
+  ok(r.ok === true && routes().providers.length === 1, "switched on: back");
+  r = await h["cdb-cm:model-delete"](okSenderEv, "ds", "deepseek-flash");
+  ok(r.ok === true && routes().providers.length === 0, "the last model removed: empty again");
+  const before = statSync(routesPath).mtimeMs;
+  api.syncRoutes();
+  ok(statSync(routesPath).mtimeMs === before, "an unchanged configuration does not rewrite the file (no needless mtime bump)");
   rmSync(dir, { recursive: true, force: true });
 }
 

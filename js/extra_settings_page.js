@@ -1263,8 +1263,8 @@
         "sessions that pick one to that endpoint with your own key. Everything else keeps going " +
         "to Anthropic on your subscription. The providers and models come from the customModels " +
         "key of claude-desktop-extra.jsonc (see docs/custom-models.md); this switch only turns the " +
-        "whole thing off and on. Applies live - no restart: the Code tab lists them on its next " +
-        "reload, and sessions started after that use them.",
+        "whole thing off and on. Applies live - no restart: open sessions stop or resume routing at " +
+        "once, and the Code tab lists the models on its next reload.",
       ariaLabel: "list custom Anthropic-compatible models in the Code model picker",
       read: "customModelsRead",
       write: "customModelsSet",
@@ -2111,12 +2111,21 @@
           flip.disabled = true;
           api.customModelsSet(!st.enabled).then(function (r) {
             if (failed(r)) { flip.disabled = false; toast("Could not change custom models: " + reason(r), true); return; }
-            toast(st.enabled ? "Custom models off - the picker is stock again on the next reload"
+            toast(st.enabled ? "Custom models off - open sessions stop routing now; the picker is stock again on the next reload"
               : "Custom models on - reload the Code tab to see them in the picker");
             call("customModelsConfig");
           });
         });
         host.appendChild(flip);
+        // The picker is drawn from the page's bootstrap: a new model shows up
+        // there after a reload of the Code tab (the routing itself is live).
+        var reload = el("button", "cdbx-btn cdbx-models-reload", "Reload the Code tab");
+        reload.type = "button";
+        reload.title = "Reloads this page so the model picker lists the current models. Open sessions keep running.";
+        reload.addEventListener("click", function () {
+          try { window.location.reload(); } catch (e) { toast("Could not reload: " + (e && e.message ? e.message : String(e)), true); }
+        });
+        host.appendChild(reload);
       }
 
       // --- web search: one app-wide choice ------------------------------------
@@ -2133,7 +2142,7 @@
         "Every web search in a Code session is a separate request the CLI sends to a small Anthropic " +
         "model, whatever model the session uses. Answer those with one of your custom models instead " +
         "(no Anthropic usage for searches), with another Claude model, or keep the default. Only models " +
-        "that have the web search tool are offered. Applies to sessions started after the change."));
+        "that have the web search tool are offered. Applies at once, open sessions included."));
       wsRow.appendChild(wsMain);
       var wsAside = el("div", "cdbx-row-aside");
       var wsSel = el("select", "cdbx-select");
@@ -2193,7 +2202,9 @@
       var files = el("div", "cdbx-note cdbx-models-files",
         "Written to " + (st.paths && st.paths.json) + "; keys to " + (st.paths && st.paths.secrets) +
         " (0600). A provider in " + (st.paths && st.paths.jsonc) + " is shown locked - edit that file to change it. " +
-        "Changes reach the picker on the next reload of the Code tab and sessions started after that.");
+        "Routing changes - a key, a model, a provider - reach open sessions at once (" + (st.paths && st.paths.routes) +
+        ", 0600, re-read by every session). New models show in the picker after the Code tab reloads - the button " +
+        "above does it. Only a session opened before your very first provider existed needs the app restarted.");
       host.appendChild(files);
     }
 

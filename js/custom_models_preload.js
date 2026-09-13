@@ -32,9 +32,15 @@
   // Read-and-scrub: the key must not outlive this function in the environment.
   var rawJson = process.env.CDB_CUSTOM_MODELS_JSON;
   var logPath = process.env.CDB_CUSTOM_MODELS_LOG || "";
+  // Live routing: the app rewrites this file (0600) at every change of the
+  // configuration; it is re-read here when its mtime moves, so a key fixed,
+  // a model added or a provider removed reaches this session without a
+  // restart. Absent or empty = no route.
+  var routesPath = process.env.CDB_CUSTOM_MODELS_ROUTES || "";
   var bunOptions = process.env.BUN_OPTIONS;
   delete process.env.CDB_CUSTOM_MODELS_JSON;
   delete process.env.CDB_CUSTOM_MODELS_LOG;
+  delete process.env.CDB_CUSTOM_MODELS_ROUTES;
   if (typeof bunOptions === "string") {
     // Strip only our own --preload token; a user's other BUN_OPTIONS survive.
     var kept = bunOptions.split(/\s+/).filter(function (t) {
@@ -56,28 +62,88 @@
     if (typeof Bun === "undefined") return;
     if (path.basename(process.execPath) !== "claude") return;
   }
-  if (!rawJson) return;
-
-  var cfg;
-  try { cfg = JSON.parse(rawJson); }
-  catch (e) { log("config unreadable (" + e.message + ") - routing off"); return; }
+  if (!rawJson && !routesPath) return;
 
   // The CLI validator's pass: anything ^claude-\S+$ is accepted by set_model.
   var PREFIX = "claude-";
   function exposedId(id) { return id.indexOf(PREFIX) === 0 ? id : PREFIX + id; }
 
-  // alias (what the CLI sends) -> { provider, model }
+  // The routing state, rebuilt from a config object: alias (what the CLI
+  // sends) -> { provider, model }, plus the web-search target.
+  var cfg = { providers: [] };
   var routes = new Map();
-  var providers = Array.isArray(cfg.providers) ? cfg.providers : [];
-  providers.forEach(function (p) {
-    if (!p || typeof p !== "object" || !Array.isArray(p.models)) return;
-    p.models.forEach(function (m) {
-      if (!m || typeof m.id !== "string" || !m.id.trim()) return;
-      var alias = exposedId(m.id.trim());
-      if (!routes.has(alias)) routes.set(alias, { provider: p, model: m });
+  var webSearchRoute = null;
+  var webSearchAnthropic = "";
+  function applyConfig(next) {
+    cfg = next && typeof next === "object" ? next : { providers: [] };
+    routes = new Map();
+    var providers = Array.isArray(cfg.providers) ? cfg.providers : [];
+    providers.forEach(function (p) {
+      if (!p || typeof p !== "object" || !Array.isArray(p.models)) return;
+      p.models.forEach(function (m) {
+        if (!m || typeof m.id !== "string" || !m.id.trim()) return;
+        var alias = exposedId(m.id.trim());
+        if (!routes.has(alias)) routes.set(alias, { provider: p, model: m });
+      });
     });
-  });
-  if (!routes.size) { log("no custom model configured - routing off"); return; }
+    // The CLI's web-search sub-request (one server tool, normally answered by a
+    // small Claude model) can be handed to one of the custom models instead.
+    // App-wide: cfg.webSearch = "<model id or alias>"; a per-provider
+    // webSearch (configs written before it was global) is the fallback.
+    // A custom target is a route; an Anthropic target (claude-opus-5...) is a
+    // model name substituted into the sub-request, which then goes to Anthropic
+    // as usual with the session's own credentials.
+    webSearchRoute = null;
+    webSearchAnthropic = "";
+    if (typeof cfg.webSearch === "string" && cfg.webSearch.trim()) {
+      var wsWant = cfg.webSearch.trim().replace(/\[\w+\]$/, ""); // routes are keyed without [1m]
+      webSearchRoute = routes.get(exposedId(wsWant)) || null;
+      if (!webSearchRoute && /^claude-[a-z0-9][a-z0-9.-]{0,60}$/.test(wsWant)) webSearchAnthropic = wsWant;
+    }
+    if (!webSearchRoute && !webSearchAnthropic) providers.some(function (p) {
+      if (!p || typeof p.webSearch !== "string") return false;
+      var r = routes.get(exposedId(p.webSearch.trim()));
+      if (r && r.provider === p) { webSearchRoute = r; return true; }
+      return false;
+    });
+  }
+  function describeRoutes() {
+    var names = [];
+    routes.forEach(function (r, alias) { names.push(alias + " -> " + r.provider.id + "/" + r.model.id); });
+    return (names.length ? names.join(", ") : "no custom model") + (webSearchRoute ? "; web search -> " + webSearchRoute.model.id
+      : (webSearchAnthropic ? "; web search -> " + webSearchAnthropic + " (Anthropic)" : ""));
+  }
+
+  // The routes file: read at start (it wins over the environment, being the
+  // newer of the two), then again whenever its mtime or size moved - one
+  // stat per API request, nothing between requests.
+  var routesStamp = "";
+  function readRoutesFile() {
+    var st = fs.statSync(routesPath, { throwIfNoEntry: false });
+    var stamp = st ? st.mtimeMs + ":" + st.size : "absent";
+    if (stamp === routesStamp) return false;
+    routesStamp = stamp;
+    if (!st) { applyConfig(null); return true; }
+    applyConfig(JSON.parse(fs.readFileSync(routesPath, "utf8")));
+    return true;
+  }
+  function refreshRoutes() {
+    if (!routesPath) return;
+    try {
+      if (readRoutesFile()) log("routes reloaded: " + describeRoutes());
+    } catch (e) { log("routes file unreadable (" + (e && e.message) + ") - keeping the current routes"); }
+  }
+
+  var initial = null;
+  if (rawJson) {
+    try { initial = JSON.parse(rawJson); }
+    catch (e) { log("config unreadable (" + e.message + ") - routing off until the routes file says otherwise"); }
+  }
+  applyConfig(initial);
+  if (routesPath) {
+    try { readRoutesFile(); }
+    catch (e) { log("routes file unreadable (" + (e && e.message) + ") - using the environment's"); }
+  }
 
   function providerBase(p) {
     return String(p.baseUrl || "").replace(/\/+$/, "");
@@ -86,26 +152,6 @@
     var k = typeof p.apiKey === "string" ? p.apiKey.trim() : "";
     return k.length > 8;
   }
-  // The CLI's web-search sub-request (one server tool, normally answered by a
-  // small Claude model) can be handed to one of the custom models instead.
-  // App-wide: cfg.webSearch = "<model id or alias>"; a per-provider
-  // webSearch (configs written before it was global) is the fallback.
-  // A custom target is a route; an Anthropic target (claude-opus-5...) is a
-  // model name substituted into the sub-request, which then goes to Anthropic
-  // as usual with the session's own credentials.
-  var webSearchRoute = null;
-  var webSearchAnthropic = "";
-  if (typeof cfg.webSearch === "string" && cfg.webSearch.trim()) {
-    var wsWant = cfg.webSearch.trim().replace(/\[\w+\]$/, ""); // routes are keyed without [1m]
-    webSearchRoute = routes.get(exposedId(wsWant)) || null;
-    if (!webSearchRoute && /^claude-[a-z0-9][a-z0-9.-]{0,60}$/.test(wsWant)) webSearchAnthropic = wsWant;
-  }
-  if (!webSearchRoute && !webSearchAnthropic) providers.some(function (p) {
-    if (!p || typeof p.webSearch !== "string") return false;
-    var r = routes.get(exposedId(p.webSearch.trim()));
-    if (r && r.provider === p) { webSearchRoute = r; return true; }
-    return false;
-  });
   function isWebSearchSubRequest(body) {
     return Array.isArray(body.tools) && body.tools.length === 1 && body.tools[0] &&
       /^web_search/.test(body.tools[0].type || "");
@@ -285,6 +331,7 @@
     var isMessages = /\/v1\/messages$/.test(pathname);
     var isCount = /\/v1\/messages\/count_tokens$/.test(pathname);
     if (!isMessages && !isCount) return null;
+    refreshRoutes();
     var maybeWebSearch = (!!webSearchRoute || !!webSearchAnthropic) && isMessages && init.body.indexOf('"web_search') !== -1;
     var ours = quickMatch(init.body);
     if (!ours && !maybeWebSearch) return isMessages ? foreignPreviousId(rawFetch, input, init) : null;
@@ -404,12 +451,10 @@
   Object.keys(rawFetch).forEach(function (k) { hooked[k] = rawFetch[k]; }); // Bun: fetch.preconnect...
   globalThis.fetch = hooked;
 
-  var names = [];
-  routes.forEach(function (r, alias) { names.push(alias + " -> " + r.provider.id + "/" + r.model.id); });
-  log("active: " + names.join(", ") + (webSearchRoute ? "; web search -> " + webSearchRoute.model.id
-    : (webSearchAnthropic ? "; web search -> " + webSearchAnthropic + " (Anthropic)" : "")));
+  log("active: " + describeRoutes() + (routesPath ? " (live from " + routesPath + ")" : ""));
 
   if (SELFTEST) {
-    globalThis.__cdbCustomModelsPreload = { sanitize: sanitize, route: route, routes: routes, rawFetch: rawFetch };
+    globalThis.__cdbCustomModelsPreload = { sanitize: sanitize, route: route, rawFetch: rawFetch,
+      get routes() { return routes; }, refreshRoutes: refreshRoutes };
   }
 })();

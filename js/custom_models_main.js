@@ -61,6 +61,11 @@
   var PRELOAD_NAME = "preload.js";
   var LOG_NAME = "custom-models.log";
   var SECRETS_NAME = "secrets.json";
+  // What the preload routes with, rewritten at every change of the
+  // configuration and re-read by the CLI sessions already open (live routing):
+  // the resolved providers WITH their keys, 0600 in the 0700 subdir - the same
+  // exposure as secrets.json. Empty when the feature is off.
+  var ROUTES_NAME = "routes.json";
   // Picker surfaces as the bootstrap names them. The desktop Code tab reads
   // TWO of them: `ccd` is the catalogue the picker menu is drawn from, `code`
   // is the surface the session logic runs on - the model's effort options
@@ -180,6 +185,7 @@
       var tmp = p + ".cdb-tmp";
       _fs.writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n", { encoding: "utf8", mode: 384 });
       _fs.renameSync(tmp, p);
+      syncRoutes();
       return { ok: true };
     } catch (e) {
       return { ok: false, error: "cannot write " + p + ": " + (e && e.message ? e.message : String(e)) };
@@ -393,6 +399,7 @@
       try { _fs.unlinkSync(tmp); } catch (e5) {}
       return { ok: false, error: "cannot write " + p + ": " + ((e4 && e4.message) || String(e4)) };
     }
+    syncRoutes();
     return { ok: true, path: p };
   }
   function writePref(value) {
@@ -837,6 +844,45 @@
       return null;
     }
   }
+  // The routing payload the preload works from: providers with their keys,
+  // models with what the sanitiser needs, the app-wide web-search target.
+  function routesPayload(cfg) {
+    if (!cfg) return { providers: [] };
+    var payload = { providers: cfg.providers.map(function (p) {
+      var o = { id: p.id, baseUrl: p.baseUrl, apiKey: p.apiKey,
+        models: p.models.map(function (m) {
+          return { id: m.id, vision: m.vision, thinking: m.thinking, webSearch: m.webSearch };
+        }) };
+      if (p.headers) o.headers = p.headers;
+      if (p.effortMap) o.effortMap = p.effortMap;
+      return o;
+    }) };
+    if (cfg.webSearch) payload.webSearch = cfg.webSearch;
+    return payload;
+  }
+  function routesPath() {
+    var d = pathFor(SUBDIR);
+    return d ? _path.join(d, ROUTES_NAME) : null;
+  }
+  // Rewrites routes.json from the current configuration - the sessions
+  // already open re-read it on their next request, so a key fixed, a model
+  // added or a provider removed takes effect without a restart. Off (or
+  // nothing configured) writes an empty list, which stops the routing in
+  // those sessions the same way. Only written when the content changed.
+  var lastRoutesText = null;
+  function syncRoutes() {
+    var p = routesPath();
+    if (!p) return;
+    try {
+      var text = JSON.stringify(routesPayload(activeConfig()), null, 2) + "\n";
+      if (text === lastRoutesText) return;
+      _fs.mkdirSync(_path.dirname(p), { recursive: true, mode: 448 });
+      var tmp = p + ".cdb-tmp";
+      _fs.writeFileSync(tmp, text, { encoding: "utf8", mode: 384 });
+      _fs.renameSync(tmp, p);
+      lastRoutesText = text;
+    } catch (e) { log("cannot write " + p + ": " + (e && e.message ? e.message : String(e))); }
+  }
   function cliEnv() {
     try {
       var cfg = activeConfig();
@@ -844,23 +890,18 @@
       if (!cfg) return {};
       var preload = ensurePreload();
       if (!preload) return {};
+      syncRoutes();
       var logDir = pathFor("logs");
-      var payload = { providers: cfg.providers.map(function (p) {
-        var o = { id: p.id, baseUrl: p.baseUrl, apiKey: p.apiKey,
-          models: p.models.map(function (m) {
-            return { id: m.id, vision: m.vision, thinking: m.thinking, webSearch: m.webSearch };
-          }) };
-        if (p.headers) o.headers = p.headers;
-        if (p.effortMap) o.effortMap = p.effortMap;
-        return o;
-      }) };
-      if (cfg.webSearch) payload.webSearch = cfg.webSearch;
       var prior = typeof process.env.BUN_OPTIONS === "string" ? process.env.BUN_OPTIONS.trim() : "";
       var opt = "--preload=" + preload;
+      // The initial routes travel in the environment (works even if the file
+      // cannot be read); the file is what keeps them current afterwards.
       var env = {
         BUN_OPTIONS: prior && prior.indexOf(opt) === -1 ? prior + " " + opt : (prior || opt),
-        CDB_CUSTOM_MODELS_JSON: JSON.stringify(payload)
+        CDB_CUSTOM_MODELS_JSON: JSON.stringify(routesPayload(cfg))
       };
+      var rp = routesPath();
+      if (rp) env.CDB_CUSTOM_MODELS_ROUTES = rp;
       if (logDir) env.CDB_CUSTOM_MODELS_LOG = _path.join(logDir, LOG_NAME);
       return env;
     } catch (e) {
@@ -919,7 +960,7 @@
     out.webSearch = cfg.webSearch;
     out.webSearchLocked = cfg.webSearchLocked;
     out.anthropicModels = lastAnthropicModels.slice();
-    out.paths = { json: pathFor(JSON_NAME), jsonc: pathFor(JSONC_NAME), secrets: secretsPath() };
+    out.paths = { json: pathFor(JSON_NAME), jsonc: pathFor(JSONC_NAME), secrets: secretsPath(), routes: routesPath() };
     out.presets = PRESETS;
     return out;
   }
@@ -1367,12 +1408,13 @@
   });
 
   globalThis.__cdbCustomModels = { cliEnv: cliEnv, enrichBootstrap: enrichBootstrap, readConfig: readConfig,
-    selectionOutcome: selectionOutcome, rememberServerState: rememberServerState, listedIds: listedIds };
+    selectionOutcome: selectionOutcome, rememberServerState: rememberServerState, listedIds: listedIds, syncRoutes: syncRoutes };
 
   setTimeout(function () {
     var c = readConfig();
     var n = 0;
     c.providers.forEach(function (p) { n += p.models.length; });
+    if (c.configured || _fs.existsSync(routesPath() || "")) syncRoutes();
     log("installed (main); " + (c.configured ? n + " model(s) from " + c.providers.length + " provider(s), " +
       (c.enabled ? "on" : "off") + " (source: " + c.source + "), surfaces " + c.surfaces.join(",")
       : "no customModels.providers configured - feature idle"));
