@@ -713,6 +713,7 @@
 .cdbx-models-locked { opacity: 0.8; }
 .cdbx-models-list { margin: 0 8px; }
 .cdbx-models-add { margin: 8px 12px 0; }
+.cdbx-models-add-provider { margin: 10px 0 4px; }
 .cdbx-models-warn { color: color-mix(in srgb, #e0a030 70%, currentColor); }
 .cdbx-models-form {
   margin: 8px 12px;

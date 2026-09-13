@@ -723,16 +723,17 @@ async function featuresPanel(featuresItem) {
 // observable DOM or a recorded bridge call.
 async function modelsPanel(modelsItem) {
   window.__cmConfig = { ok: true, enabled: true, configured: true, lockedByJsonc: false, source: "default",
-    surfaces: ["ccd"], models: 2,
+    surfaces: ["ccd"], models: 2, webSearch: "claude-deepseek-flash", webSearchLocked: false,
+    anthropicModels: [{ id: "claude-opus-5", name: "Opus 5" }, { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }],
     presets: [{ id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", keyHint: "sk-...",
       models: [{ id: "deepseek-flash", name: "DeepSeek Flash" }] }],
     paths: { json: "/home/u/.config/Claude/claude-desktop-extra.json", jsonc: "/home/u/.config/Claude/claude-desktop-extra.jsonc",
       secrets: "/home/u/.config/Claude/custom-models/secrets.json" },
     providers: [
-      { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored", webSearch: "deepseek-flash",
+      { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored",
         models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", name: "DeepSeek Flash", description: "", vision: true, thinking: true, context1m: false, effortDefault: "xhigh", badge: "" }] },
-      { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none", webSearch: "",
-        models: [{ id: "gw-model", alias: "claude-gw-model", name: "gw-model", description: "", vision: false, thinking: false, context1m: false, effortDefault: "", badge: "" }] }
+      { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none",
+        models: [{ id: "gw-model", alias: "claude-gw-model", name: "gw-model", description: "", vision: false, thinking: false, webSearch: false, context1m: false, effortDefault: "", badge: "" }] }
     ] };
   window.__cmWrites = [];
   modelsItem.click();
@@ -747,8 +748,17 @@ async function modelsPanel(modelsItem) {
   ok(cards.length === 2, "one card per provider (" + cards.length + ")");
   if (cards.length !== 2) return;
   ok(cards[0].querySelector(".cdbx-id").textContent === "deepseek", "the editable provider is titled by its id");
-  ok(/API key: stored/.test(cards[0].querySelector(".cdbx-state").textContent) && /web search on deepseek-flash/.test(cards[0].querySelector(".cdbx-state").textContent),
-     "its key line says stored and names the web-search model");
+  ok(/API key: stored/.test(cards[0].querySelector(".cdbx-state").textContent), "its key line says stored");
+  const ws = panel.querySelector("select.cdbx-select");
+  ok(!!ws && ws.value === "claude-deepseek-flash" && ws.options.length === 4 && ws.options[0].value === "" &&
+     ws.options[1].textContent === "deepseek / DeepSeek Flash" && ws.options[2].value === "claude-opus-5" && ws.options[3].textContent === "Anthropic / Haiku 4.5",
+     "the web-search select: the default, the custom models, then the Anthropic ones; current one selected (" + ws.options.length + ")");
+  ok(!Array.from(ws.options).some((o) => o.value === "claude-gw-model"), "a model marked without the web search tool is not offered");
+  ws.value = "";
+  ws.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("websearch-set:") >= 0, "picking Anthropic writes an empty value");
+  window.__cmWrites = [];
   ok(cards[1].classList.contains("cdbx-models-locked") && /set in claude-desktop-extra\.jsonc/.test(cards[1].querySelector(".cdbx-id").textContent),
      "the .jsonc provider is drawn locked and says so");
   ok(/MISSING/.test(cards[1].querySelector(".cdbx-state").textContent), "a provider without a key says so");
@@ -770,32 +780,48 @@ async function modelsPanel(modelsItem) {
     form.querySelector("select").value = "high";
     const boxes = form.querySelectorAll("input[type=checkbox]");
     boxes[1].checked = false; // images off
+    boxes[2].checked = false; // web search tool off
     Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Add model").click();
     await sleep(60);
-    ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high") >= 0,
-       "Add model sends provider id, model id, name, thinking, images and effort: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high:false") >= 0,
+       "Add model sends provider id, model id, name, thinking, images, effort and web search: " + JSON.stringify(window.__cmWrites));
   }
 
-  // Add a provider: the preset prefills, the key travels only when typed.
-  const addForm = panel.querySelector(".cdbx-models-form:not(.cdbx-models-form-model-new)");
-  ok(!!addForm, "the Add a provider form is on the page");
+  // Add a provider: a button opens the form; the preset prefills, the key
+  // travels only when typed.
+  ok(!panel.querySelector(".cdbx-models-form-provider-new"), "the provider form is not open until asked");
+  panel.querySelector(".cdbx-models-add-provider").click();
+  await sleep(30);
+  const addForm = panel.querySelector(".cdbx-models-form-provider-new");
+  ok(!!addForm, "Add a provider opens the form under the button");
   if (addForm) {
     const preset = addForm.querySelector("select");
     preset.value = "deepseek";
     preset.dispatchEvent(new Event("change", { bubbles: true }));
     const f = addForm.querySelectorAll("input.cdbx-input");
-    ok(f[0].value === "deepseek" && f[1].value === "https://api.deepseek.com/anthropic" && f[3].value === "deepseek-flash",
-       "the preset prefills id, base URL and web-search model");
+    ok(f[0].value === "deepseek" && f[1].value === "https://api.deepseek.com/anthropic" && f.length === 3,
+       "the preset prefills id and base URL; the form has no other field than the key");
     ok(f[2].type === "password" && f[2].value === "", "the key field is a password field and starts empty");
     f[0].value = "ds2";
     f[2].value = "sk-secret-123456";
     Array.from(addForm.querySelectorAll("button")).find((b) => b.textContent === "Add provider").click();
     await sleep(80);
-    ok(window.__cmWrites.some((w) => w === "provider-set:ds2:https://api.deepseek.com/anthropic:key:deepseek-flash"),
-       "Add provider sends the id, URL, key and web-search model: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.some((w) => w === "provider-set:ds2:https://api.deepseek.com/anthropic:key"),
+       "Add provider sends the id, URL and key: " + JSON.stringify(window.__cmWrites));
     ok(window.__cmWrites.some((w) => /^model-set:ds2:deepseek-flash:DeepSeek Flash:/.test(w)),
        "and a preset brings its models along: " + JSON.stringify(window.__cmWrites));
     ok(!/sk-secret-123456/.test(panel.textContent), "the key never appears in the panel");
+    // By hand (no preset): the provider alone, the card's Add a model is next.
+    window.__cmWrites = [];
+    panel.querySelector(".cdbx-models-add-provider").click();
+    await sleep(30);
+    const addForm2 = panel.querySelector(".cdbx-models-form-provider-new");
+    const g = addForm2.querySelectorAll("input.cdbx-input");
+    g[0].value = "gw2"; g[1].value = "https://gw.example/anthropic";
+    Array.from(addForm2.querySelectorAll("button")).find((b) => b.textContent === "Add provider").click();
+    await sleep(80);
+    ok(window.__cmWrites.length === 1 && window.__cmWrites[0] === "provider-set:gw2:https://gw.example/anthropic:nokey",
+       "by hand: only the provider is created: " + JSON.stringify(window.__cmWrites));
   }
 
   // Test and remove on the editable provider.
@@ -1834,9 +1860,10 @@ window.cdbExtra = {
   // provider without a key. Writes are recorded and answered with the same
   // state, which is what the panel redraws from.
   customModelsConfig: function () { return Promise.resolve(window.__cmConfig); },
-  customModelsProviderSet: function (p) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-set:" + p.id + ":" + p.baseUrl + ":" + (p.apiKey ? "key" : "nokey") + ":" + p.webSearch]); return Promise.resolve(window.__cmConfig); },
+  customModelsProviderSet: function (p) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-set:" + p.id + ":" + p.baseUrl + ":" + (p.apiKey ? "key" : "nokey")]); return Promise.resolve(window.__cmConfig); },
+  customModelsWebSearchSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["websearch-set:" + v]); return Promise.resolve(window.__cmConfig); },
   customModelsProviderDelete: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-delete:" + id]); return Promise.resolve(window.__cmConfig); },
-  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch]); return Promise.resolve(window.__cmConfig); },
   customModelsModelDelete: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["model-delete:" + pid + ":" + mid]); return Promise.resolve(window.__cmConfig); },
   customModelsTest: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["test:" + id]); return Promise.resolve({ ok: true, status: 200, model: "deepseek-flash" }); },
   // The two window modes. Three fields the page treats as three different

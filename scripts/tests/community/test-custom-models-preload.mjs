@@ -19,9 +19,9 @@ const ok = (c, n) => { if (c) { pass++; console.log("  ok   " + n); }
   else { fail++; console.log("  FAIL " + n); } };
 
 const CONFIG = {
+  webSearch: "claude-deepseek-flash",
   providers: [{
     id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "sk-test-1234567890",
-    webSearch: "deepseek-flash",
     models: [{ id: "deepseek-flash", vision: true, thinking: true }, { id: "deepseek-pro", vision: false, thinking: false }]
   }, {
     id: "nokey", baseUrl: "https://gw.example/anthropic", apiKey: "",
@@ -192,6 +192,40 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
   await hooked(ANTHROPIC, messagesInit({ model: "claude-haiku-4-5", max_tokens: 100, messages: [{ role: "user", content: "search" }],
     tools: [{ type: "web_search_20250305", name: "web_search" }, { name: "Read", input_schema: {} }] }));
   ok(calls[1].url === ANTHROPIC, "a Claude conversation that merely lists web_search among other tools is not touched");
+  // Legacy per-provider key still works when no app-wide value is given;
+  // no route at all leaves web search on Anthropic.
+  const legacy = JSON.parse(JSON.stringify(CONFIG)); delete legacy.webSearch; legacy.providers[0].webSearch = "deepseek-pro";
+  const { hooked: h2, calls: c2 } = load(legacy);
+  await h2(ANTHROPIC, messagesInit({ model: "claude-haiku-4-5", max_tokens: 100, messages: [{ role: "user", content: "s" }],
+    tools: [{ type: "web_search_20250305", name: "web_search" }] }));
+  ok(JSON.parse(c2[0].init.body).model === "deepseek-pro", "the per-provider webSearch is the fallback");
+  const none = JSON.parse(JSON.stringify(CONFIG)); delete none.webSearch;
+  const { hooked: h3, calls: c3 } = load(none);
+  await h3(ANTHROPIC, messagesInit({ model: "claude-haiku-4-5", max_tokens: 100, messages: [{ role: "user", content: "s" }],
+    tools: [{ type: "web_search_20250305", name: "web_search" }] }));
+  ok(c3[0].url === ANTHROPIC && JSON.parse(c3[0].init.body).model === "claude-haiku-4-5", "no web-search route: the sub-request stays as it is");
+  // An Anthropic model as the target: same request to Anthropic, other model name.
+  const opus = JSON.parse(JSON.stringify(CONFIG)); opus.webSearch = "claude-opus-5";
+  const { hooked: h4, calls: c4 } = load(opus);
+  await h4(ANTHROPIC, messagesInit({ model: "claude-haiku-4-5", max_tokens: 100, messages: [{ role: "user", content: "s" }],
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] }));
+  const b4 = JSON.parse(c4[0].init.body);
+  ok(c4[0].url === ANTHROPIC && b4.model === "claude-opus-5" && b4.tools[0].max_uses === 3 && c4[0].init.headers.authorization === "Bearer sk-ant-oauth-secret",
+     "web search on Opus: only the model name changes, credentials and body untouched");
+  await h4(ANTHROPIC, messagesInit({ model: "claude-opus-5", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }));
+  ok(JSON.parse(c4[1].init.body).model === "claude-opus-5" && c4[1].init.body === messagesInit({ model: "claude-opus-5", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }).body,
+     "a normal Opus request is not rewritten");
+}
+
+// --- a model without the web search tool ------------------------------------------
+{
+  const cfg = JSON.parse(JSON.stringify(CONFIG));
+  cfg.providers[0].models[0].webSearch = false;
+  const { hooked, calls } = load(cfg);
+  await hooked(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 100, messages: [{ role: "user", content: "x" }],
+    tools: [{ name: "Read", input_schema: {} }, { type: "web_search_20250305", name: "web_search" }] }));
+  const t = JSON.parse(calls[0].init.body).tools;
+  ok(t.length === 1 && t[0].name === "Read", "webSearch:false strips the web_search tool from the model's requests");
 }
 
 // --- 400 on signed thinking -> retry without thinking blocks ----------------------

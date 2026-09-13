@@ -68,6 +68,10 @@
   var ID_PREFIX = "claude-";
   var ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,120}$/;
   var PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$/;
+  // An Anthropic model id as the bootstrap lists them (claude-opus-5,
+  // claude-haiku-4-5-20251001...): what the app-wide web-search choice may
+  // name besides one of ours.
+  var ANTHROPIC_ID_RE = /^claude-[a-z0-9][a-z0-9.-]{0,60}$/;
 
   var DEBUG = process.env.CDB_CUSTOM_MODELS_DEBUG === "1";
 
@@ -108,11 +112,14 @@
   // customModels: {
   //   enabled?: boolean,            // the switch; absent = on when a model is configured
   //   surfaces?: ["ccd"],           // which pickers list them (bootstrap surface ids)
+  //   webSearch?: "deepseek-flash", // app-wide: the CLI's web-search sub-request goes to
+  //                                 // this model instead of Anthropic's small default - a
+  //                                 // custom model, or any Anthropic id (claude-opus-5...)
   //   providers: [{
   //     id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic",
-  //     apiKey | apiKeyEnv | apiKeyFile, headers?, webSearch?, effortMap?,
+  //     apiKey | apiKeyEnv | apiKeyFile, headers?, effortMap?,
   //     models: [{ id, name?, shortName?, description?, badge?, section?,
-  //                context1m?, vision?, thinking?, effort?, effortDefault? }]
+  //                context1m?, vision?, thinking?, webSearch?, effort?, effortDefault? }]
   //   }]
   // }
   // Two sources, merged: the hand-owned .jsonc and the .json the Settings
@@ -194,7 +201,8 @@
       section: raw.section === "overflow" ? "overflow" : "main",
       context1m: raw.context1m === true,
       vision: raw.vision !== false,
-      thinking: raw.thinking !== false
+      thinking: raw.thinking !== false,
+      webSearch: raw.webSearch !== false
     };
     if (Array.isArray(raw.effort)) {
       var lv = raw.effort.filter(function (x) { return EFFORT_ORDER.indexOf(x) !== -1; });
@@ -250,7 +258,7 @@
         if (byId[p.id]) { warnOnce("dupprov" + p.id, "provider " + p.id + " is in both files - the .jsonc one wins"); return; }
         p.models = p.models.filter(function (m) {
           if (seenModel[m.alias]) { warnOnce("dup" + m.alias, "model id " + m.id + " listed twice - keeping the first"); return false; }
-          seenModel[m.alias] = true;
+          seenModel[m.alias] = m;
           return true;
         });
         byId[p.id] = p;
@@ -272,8 +280,28 @@
     else if (typeof b.enabled === "boolean") { enabled = b.enabled; source = "json"; }
     else { enabled = usable.length > 0; source = "default"; }
 
+    // Web search is one app-wide choice (the CLI sends one sub-request per
+    // search, whatever the session's model): the .jsonc value, else the
+    // .json one, else - for configs written before it was global - the first
+    // provider that names one. Resolved to the alias of a configured model.
+    var wsRaw = typeof a.webSearch === "string" ? a.webSearch
+      : (typeof b.webSearch === "string" ? b.webSearch : "");
+    var wsLocked = typeof a.webSearch === "string";
+    if (!wsRaw) usable.some(function (p) { if (p.webSearch) { wsRaw = p.webSearch; return true; } return false; });
+    var webSearch = "";
+    if (wsRaw.trim()) {
+      var want = wsRaw.trim();
+      var alias = want.indexOf(ID_PREFIX) === 0 ? want : ID_PREFIX + want;
+      if (seenModel[alias]) {
+        if (seenModel[alias].webSearch) webSearch = alias;
+        else warnOnce("wsno" + want, "webSearch names " + want + ", which is marked without the web search tool - web search stays on Anthropic");
+      } else if (ANTHROPIC_ID_RE.test(want)) webSearch = want;
+      else warnOnce("ws" + want, "webSearch names " + want + ", which is neither a configured model nor an Anthropic id - web search stays on Anthropic");
+    }
+
     return { enabled: enabled, source: source, surfaces: surfaces, providers: usable,
-      allProviders: providers, configured: usable.length > 0 };
+      allProviders: providers, configured: usable.length > 0,
+      webSearch: webSearch, webSearchLocked: wsLocked };
   }
   function activeConfig() {
     var c = readConfig();
@@ -395,7 +423,7 @@
       short_name: m.shortName || m.name,
       description: m.description,
       section: m.section,
-      capabilities: { compass: true, gsuite_tools: true, mm_images: m.vision, mm_pdf: false, web_search: true },
+      capabilities: { compass: true, gsuite_tools: true, mm_images: m.vision, mm_pdf: false, web_search: m.webSearch },
       thinking: thinkingSpec(m, effortTemplate(surface))
     };
     if (m.section === "main") base.quick_select = true;
@@ -406,10 +434,16 @@
 
   // Pure: returns the enriched bootstrap, or null when there is nothing to do
   // (no config, no model_selector_config, every entry already present).
-  function enrichBootstrap(boot, cfg) {
+  // `choices` (optional) is the selection store: {<state id>: {model, thinking}}.
+  function enrichBootstrap(boot, cfg, choices) {
     if (!isObj(boot) || !Array.isArray(boot.model_selector_config)) return null;
     if (!cfg || !cfg.providers.length) return null;
     var changed = false;
+    var aliases = Object.create(null);
+    cfg.providers.forEach(function (p) { p.models.forEach(function (m) {
+      aliases[m.alias] = m;
+      if (m.context1m) aliases[m.alias + "[1m]"] = m;
+    }); });
     boot.model_selector_config.forEach(function (surface) {
       if (!isObj(surface) || cfg.surfaces.indexOf(surface.id) === -1) return;
       if (!Array.isArray(surface.models)) surface.models = [];
@@ -426,7 +460,154 @@
         });
       });
     });
+    // The remembered choice: what the server would carry for an Anthropic
+    // model, applied to the state of the surfaces the page writes to.
+    if (choices && Array.isArray(boot.model_selector_state)) {
+      boot.model_selector_state.forEach(function (st) {
+        if (!isObj(st) || typeof st.id !== "string") return;
+        var c = choices[st.id];
+        if (!c || !aliases[c.model]) return;
+        if (st.model !== c.model) { st.model = c.model; changed = true; }
+        var th = isObj(c.thinking) ? c.thinking : defaultThinkingState(aliases[c.model]);
+        if (th) {
+          st.thinking = JSON.parse(JSON.stringify(th));
+          if (!Array.isArray(st.thinking_by_model)) st.thinking_by_model = [];
+          var found = false;
+          st.thinking_by_model.forEach(function (e) {
+            if (isObj(e) && e.id === c.model) { e.thinking = JSON.parse(JSON.stringify(th)); found = true; }
+          });
+          if (!found) st.thinking_by_model.push({ id: c.model, thinking: JSON.parse(JSON.stringify(th)) });
+          changed = true;
+        }
+      });
+    }
     return changed ? boot : null;
+  }
+  function defaultThinkingState(m) {
+    if (!m || !m.thinking) return null;
+    var levels = m.effort || EFFORT_ORDER;
+    var rec = m.effortDefault && levels.indexOf(m.effortDefault) !== -1 ? m.effortDefault
+      : (levels.indexOf("xhigh") !== -1 ? "xhigh" : levels[levels.length - 1]);
+    return { type: "effort", effort: rec };
+  }
+
+  // ---- remembered selection --------------------------------------------------
+  // The page persists the picked model server-side: PATCH /api/organizations/
+  // <org>/model_selector_state/<surface> with {model, thinking...}, answered
+  // with the surface's state ({id, model, thinking_by_model:[...]}) and
+  // returned in every bootstrap. claude.ai refuses an id it does not know
+  // (400 model_not_selectable), so a custom model would be forgotten the
+  // moment the session ends. The store below is that server state, kept in
+  // the profile for our models only: a refused PATCH for one of ours is
+  // answered locally in the server's own shape and remembered, and the next
+  // bootstrap carries the choice back exactly as it would for Opus. A PATCH
+  // the server accepts (an Anthropic model was picked) drops the memory for
+  // that surface, so the server's state wins again.
+  var STATE_NAME = "selection.json";
+  function statePath() {
+    var d = pathFor(SUBDIR);
+    return d ? _path.join(d, STATE_NAME) : null;
+  }
+  function readChoices() {
+    var v = readFileJson(statePath());
+    var out = Object.create(null);
+    if (v) Object.keys(v).forEach(function (k) {
+      if (isObj(v[k]) && typeof v[k].model === "string") out[k] = v[k];
+    });
+    return out;
+  }
+  function writeChoices(map) {
+    var p = statePath();
+    if (!p) return;
+    try {
+      _fs.mkdirSync(_path.dirname(p), { recursive: true, mode: 448 });
+      var tmp = p + ".cdb-tmp";
+      _fs.writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n", { encoding: "utf8", mode: 384 });
+      _fs.renameSync(tmp, p);
+    } catch (e) { log("cannot write " + p + ": " + (e && e.message ? e.message : String(e))); }
+  }
+  // The last state the server sent for each surface, to answer a refused
+  // PATCH with a complete object (thinking_by_model for every other model).
+  var lastServerState = Object.create(null);
+  // The Anthropic models the bootstrap listed for the first configured
+  // surface, so the panel can offer them as web-search targets by name.
+  var lastAnthropicModels = [];
+  function rememberServerState(boot, cfg) {
+    if (!isObj(boot)) return;
+    if (Array.isArray(boot.model_selector_state)) {
+      boot.model_selector_state.forEach(function (st) {
+        if (isObj(st) && typeof st.id === "string") lastServerState[st.id] = JSON.parse(JSON.stringify(st));
+      });
+    }
+    if (Array.isArray(boot.model_selector_config)) {
+      var want = cfg && cfg.surfaces ? cfg.surfaces[0] : DEFAULT_SURFACES[0];
+      boot.model_selector_config.forEach(function (sf) {
+        if (!isObj(sf) || sf.id !== want || !Array.isArray(sf.models)) return;
+        var ours = Object.create(null);
+        (cfg ? cfg.providers : []).forEach(function (p) { p.models.forEach(function (m) { ours[m.alias] = true; ours[m.alias + "[1m]"] = true; }); });
+        lastAnthropicModels = sf.models.filter(function (m) {
+          return isObj(m) && typeof m.id === "string" && ANTHROPIC_ID_RE.test(m.id) && !ours[m.id] &&
+            !(isObj(m.capabilities) && m.capabilities.web_search === false) && m.section !== "deprecated";
+        }).map(function (m) { return { id: m.id, name: typeof m.name === "string" ? m.name : m.id }; });
+      });
+    }
+  }
+  function surfaceOf(url) {
+    var m = /\/model_selector_state\/([a-z0-9_]+)(?:[?#]|$)/.exec(String(url));
+    return m ? m[1] : null;
+  }
+  // Pure: given the surface, the page's request body, the response status
+  // and the configured aliases, decide what to store and what to answer.
+  // Returns { choices: <new store or null when unchanged>, reply: <body or null> }.
+  function selectionOutcome(surface, method, reqBody, status, cfg, choices) {
+    if (method !== "PATCH" || !surface) return { choices: null, reply: null };
+    var aliases = Object.create(null);
+    cfg.providers.forEach(function (p) { p.models.forEach(function (m) {
+      aliases[m.alias] = m;
+      if (m.context1m) aliases[m.alias + "[1m]"] = m;
+    }); });
+    var req = null;
+    try { req = JSON.parse(reqBody || ""); } catch (e) {}
+    var ours = isObj(req) && typeof req.model === "string" && !!aliases[req.model];
+    var next = Object.assign(Object.create(null), choices);
+    if (status >= 200 && status < 300) {
+      // The server took it: an Anthropic model, its state is authoritative.
+      if (next[surface]) { delete next[surface]; return { choices: next, reply: null }; }
+      return { choices: null, reply: null };
+    }
+    if (!ours || status < 400) return { choices: null, reply: null };
+    var thinking = isObj(req.thinking) ? req.thinking : defaultThinkingState(aliases[req.model]);
+    next[surface] = { model: req.model, thinking: thinking };
+    var base = lastServerState[surface] ? JSON.parse(JSON.stringify(lastServerState[surface])) : { id: surface };
+    var reply = { id: surface, model: req.model, thinking_by_model: Array.isArray(base.thinking_by_model) ? base.thinking_by_model : [] };
+    if (thinking) {
+      var found = false;
+      reply.thinking_by_model.forEach(function (e) { if (isObj(e) && e.id === req.model) { e.thinking = thinking; found = true; } });
+      if (!found) reply.thinking_by_model.push({ id: req.model, thinking: thinking });
+    }
+    return { choices: next, reply: reply };
+  }
+  function onSelectionPaused(wc, params) {
+    var dbg = wc.debugger;
+    var id = params.requestId;
+    function release() { dbg.sendCommand("Fetch.continueRequest", { requestId: id }).catch(function () {}); }
+    var cfg = activeConfig();
+    if (!cfg) { release(); return; }
+    var surface = surfaceOf(params.request.url);
+    var out = selectionOutcome(surface, params.request.method, params.request.postData, params.responseStatusCode, cfg, readChoices());
+    if (out.choices) writeChoices(out.choices);
+    if (!out.reply) { release(); return; }
+    var body = Buffer.from(JSON.stringify(out.reply), "utf8").toString("base64");
+    dbg.sendCommand("Fetch.fulfillRequest", {
+      requestId: id, responseCode: 200,
+      responseHeaders: [{ name: "content-type", value: "application/json" }],
+      body: body
+    }).then(function () {
+      log("selection: " + out.reply.model + " remembered for surface " + surface + " (claude.ai answered " + params.responseStatusCode + ")");
+    }, function (e) {
+      log("selection: " + (e && e.message ? e.message : String(e)));
+      release();
+    });
   }
 
   // ---- bootstrap interception (CDP Fetch domain) ----------------------------
@@ -441,14 +622,13 @@
   // /api/ spelling of the same endpoint (the app's own 3p stub list names
   // both), and re-fetches it on its own schedule; each response is enriched.
   var PATTERNS = [];
-  var DEBUG_PATTERNS = [];
   ["claude.ai", "*.claude.ai", "claude.com", "*.claude.com"].forEach(function (h) {
     ["/api/bootstrap", "/edge-api/bootstrap"].forEach(function (base) {
       // The bare endpoint (with or without a query) and the per-org app_start;
       // the other /bootstrap/<org>/* sub-resources are not paused at all.
       PATTERNS.push("*://" + h + base, "*://" + h + base + "?*", "*://" + h + base + "/*/app_start*");
     });
-    DEBUG_PATTERNS.push("*://" + h + "/api/organizations/*/model_selector_state/*");
+    PATTERNS.push("*://" + h + "/api/organizations/*/model_selector_state/*");
   });
   function hostOk(rawUrl) {
     var host;
@@ -468,15 +648,7 @@
     var id = params.requestId;
     function release() { dbg.sendCommand("Fetch.continueRequest", { requestId: id }).catch(function () {}); }
     if (params.responseErrorReason || typeof params.responseStatusCode !== "number") { release(); return; }
-    if (DEBUG && !/bootstrap/.test(params.request.url)) {
-      // Debug-only observation of the other endpoints DEBUG_PATTERNS pause.
-      dbg.sendCommand("Fetch.getResponseBody", { requestId: id }).then(function (res) {
-        var text = res.base64Encoded ? Buffer.from(res.body, "base64").toString("utf8") : res.body;
-        log("debug: " + params.request.method + " " + params.request.url.replace(/\?.*$/, "") + " -> " +
-          params.responseStatusCode + " " + text.slice(0, 1500));
-      }).catch(function () {}).then(release);
-      return;
-    }
+    if (/\/model_selector_state\//.test(params.request.url)) { onSelectionPaused(wc, params); return; }
     if (params.responseStatusCode !== 200) { release(); return; }
     var cfg = activeConfig();
     if (!cfg) { release(); return; }
@@ -491,7 +663,8 @@
           }).join(" "));
         } catch (e) {}
       }
-      var out = enrichBootstrap(boot, cfg);
+      rememberServerState(boot, cfg);
+      var out = enrichBootstrap(boot, cfg, readChoices());
       if (!out) { release(); return; }
       var body = Buffer.from(JSON.stringify(out), "utf8").toString("base64");
       return dbg.sendCommand("Fetch.fulfillRequest", {
@@ -538,9 +711,8 @@
       wc.__cdbCmAttached = false;
       log("debugger detached (" + reason + ") - re-attaching on the next navigation");
     });
-    var patterns = PATTERNS.concat(DEBUG ? DEBUG_PATTERNS : []);
     dbg.sendCommand("Fetch.enable", {
-      patterns: patterns.map(function (u) { return { urlPattern: u, requestStage: "Response" }; })
+      patterns: PATTERNS.map(function (u) { return { urlPattern: u, requestStage: "Response" }; })
     }).then(function () {
       log("watching /api/bootstrap responses on " + safeUrl(wc));
     }, function (e) {
@@ -598,13 +770,13 @@
       var payload = { providers: cfg.providers.map(function (p) {
         var o = { id: p.id, baseUrl: p.baseUrl, apiKey: p.apiKey,
           models: p.models.map(function (m) {
-            return { id: m.id, vision: m.vision, thinking: m.thinking };
+            return { id: m.id, vision: m.vision, thinking: m.thinking, webSearch: m.webSearch };
           }) };
         if (p.headers) o.headers = p.headers;
         if (p.effortMap) o.effortMap = p.effortMap;
-        if (p.webSearch) o.webSearch = p.webSearch;
         return o;
       }) };
+      if (cfg.webSearch) payload.webSearch = cfg.webSearch;
       var prior = typeof process.env.BUN_OPTIONS === "string" ? process.env.BUN_OPTIONS.trim() : "";
       var opt = "--preload=" + preload;
       var env = {
@@ -659,14 +831,16 @@
       return {
         id: p.id, baseUrl: p.baseUrl, locked: p.locked,
         keyOk: p.apiKey.length > 8, keySource: p.keySource,
-        webSearch: p.webSearch || "",
         models: p.models.map(function (m) {
           return { id: m.id, alias: m.alias, name: m.name, description: m.description,
-            vision: m.vision, thinking: m.thinking, context1m: m.context1m,
+            vision: m.vision, thinking: m.thinking, webSearch: m.webSearch, context1m: m.context1m,
             effortDefault: m.effortDefault || (m.thinking ? "xhigh" : ""), badge: m.badge };
         })
       };
     });
+    out.webSearch = cfg.webSearch;
+    out.webSearchLocked = cfg.webSearchLocked;
+    out.anthropicModels = lastAnthropicModels.slice();
     out.paths = { json: pathFor(JSON_NAME), jsonc: pathFor(JSONC_NAME), secrets: secretsPath() };
     out.presets = PRESETS;
     return out;
@@ -693,11 +867,7 @@
     if (!PROVIDER_ID_RE.test(id)) return { error: "provider id: letters, digits, - and _ only" };
     var baseUrl = cleanString(input.baseUrl, 300).replace(/\/+$/, "");
     if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) return { error: "base URL must start with http:// or https://" };
-    var webSearch = cleanString(input.webSearch, 120);
-    if (webSearch && !ID_RE.test(webSearch)) return { error: "web search model id is not a plain model id" };
-    var out = { id: id, baseUrl: baseUrl };
-    if (webSearch) out.webSearch = webSearch;
-    return { value: out };
+    return { value: { id: id, baseUrl: baseUrl } };
   }
   function modelPatch(input) {
     if (!isObj(input)) return { error: "model must be an object" };
@@ -712,6 +882,7 @@
     if (badge) out.badge = badge;
     if (input.vision === false) out.vision = false;
     if (input.thinking === false) out.thinking = false;
+    if (input.webSearch === false) out.webSearch = false;
     if (input.context1m === true) out.context1m = true;
     if (typeof input.effortDefault === "string" && EFFORT_ORDER.indexOf(input.effortDefault) !== -1 &&
         input.effortDefault !== "xhigh") out.effortDefault = input.effortDefault;
@@ -753,8 +924,8 @@
     return detail(readConfig());
   });
 
-  // Upsert a provider (id, baseUrl, webSearch) in the .json; a non-empty
-  // apiKey goes to the secrets file and the entry is marked apiKeyStored.
+  // Upsert a provider (id, baseUrl) in the .json; a non-empty apiKey goes to
+  // the secrets file and the entry is marked apiKeyStored.
   _ipc.handle("cdb-cm:provider-set", function (ev, input) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
     var pp = providerPatch(input);
@@ -775,7 +946,6 @@
       var i = findJsonProvider(cur, pp.value.id);
       var prev = i === -1 ? {} : cur.providers[i];
       var next = Object.assign({}, prev, pp.value);
-      if (!pp.value.webSearch) delete next.webSearch;
       if (key) next.apiKeyStored = true;
       if (!Array.isArray(next.models)) next.models = [];
       if (i === -1) cur.providers.push(next); else cur.providers[i] = next;
@@ -845,6 +1015,34 @@
     return detail(readConfig());
   });
 
+  // The app-wide web-search choice: "" for Anthropic's default, else the id
+  // (or alias) of a configured custom model.
+  _ipc.handle("cdb-cm:websearch-set", function (ev, value) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    value = cleanString(value, 130);
+    var cfg = readConfig();
+    if (cfg.webSearchLocked) return { ok: false, error: "webSearch is set in " + JSONC_NAME + " - edit that file to change it" };
+    if (value) {
+      var alias = value.indexOf(ID_PREFIX) === 0 ? value : ID_PREFIX + value;
+      var mine = null;
+      cfg.providers.forEach(function (p) { p.models.forEach(function (m) { if (m.alias === alias) mine = m; }); });
+      if (mine) {
+        if (!mine.webSearch) return { ok: false, error: mine.id + " is marked without the web search tool" };
+        value = alias;
+      } else if (ANTHROPIC_ID_RE.test(value)) {
+        // an Anthropic model: kept as typed, checked against the last bootstrap when we have one
+        if (lastAnthropicModels.length && !lastAnthropicModels.some(function (m) { return m.id === value; })) {
+          return { ok: false, error: value + " is not one of the Anthropic models the picker lists" };
+        }
+      } else return { ok: false, error: value + " is neither a configured model nor an Anthropic model id" };
+    }
+    var w = writeJson(function (cur) {
+      if (value) cur.webSearch = value; else delete cur.webSearch;
+    });
+    if (!w.ok) return w;
+    return detail(readConfig());
+  });
+
   // A one-token round trip to the provider with the stored key, so a typo in
   // the URL or the key shows here and not as a failed session. Costs the
   // provider's minimum billable request.
@@ -878,7 +1076,8 @@
       });
   });
 
-  globalThis.__cdbCustomModels = { cliEnv: cliEnv, enrichBootstrap: enrichBootstrap, readConfig: readConfig };
+  globalThis.__cdbCustomModels = { cliEnv: cliEnv, enrichBootstrap: enrichBootstrap, readConfig: readConfig,
+    selectionOutcome: selectionOutcome, rememberServerState: rememberServerState };
 
   setTimeout(function () {
     var c = readConfig();

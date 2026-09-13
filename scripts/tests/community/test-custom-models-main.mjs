@@ -59,7 +59,7 @@ const PROVIDERS = `{
       "webSearch": "deepseek-flash",
       "models": [
         { "id": "deepseek-flash", "name": "DeepSeek Flash", "description": "V4.1 Flash", "context1m": true },
-        { "id": "deepseek-pro", "thinking": false, "vision": false, "badge": "slow" }
+        { "id": "deepseek-pro", "thinking": false, "vision": false, "webSearch": false, "badge": "slow" }
       ]
     }]
   }
@@ -199,7 +199,7 @@ function bootstrap() {
 {
   const dir = mkdtempSync(join(tmpdir(), "cdb-cm-main-"));
   writeFileSync(join(dir, "claude-desktop-extra.jsonc"), PROVIDERS);
-  const { api } = load(dir);
+  const { api, h } = load(dir);
   const cfg = api.readConfig();
   const boot = bootstrap();
   const out = api.enrichBootstrap(boot, cfg);
@@ -215,6 +215,7 @@ function bootstrap() {
   ok(flash.section === "main" && flash.quick_select === true, "listed in the main section with quick select, like Anthropic's current models");
   ok(flash.capabilities && flash.capabilities.mm_images === true && flash.capabilities.mm_pdf === false &&
      flash.capabilities.web_search === true, "capabilities: images from vision, no pdf, web search on");
+  ok(pro.capabilities.web_search === false, "webSearch:false reaches the picker's capabilities");
   ok(flash.thinking.type === "effort" && flash.thinking.effort_options.map((o) => o.id).join(",") === "low,medium,high,xhigh,max",
      "thinking is type effort with the five levels (no ultracode)");
   ok(flash.thinking.effort_options.map((o) => o.name).join(",") === "Faible,Moyen,Élevé,Extra,Max",
@@ -236,6 +237,12 @@ function bootstrap() {
      "model_selector_state and claude_ai_available_models are not touched");
   ok(api.enrichBootstrap(out, cfg) === null, "a second pass finds every entry present and changes nothing");
   ok(api.enrichBootstrap({ account: {} }, cfg) === null, "a response without model_selector_config is left alone");
+  api.rememberServerState(bootstrap(), cfg);
+  const cr = await h["cdb-cm:config-read"](okSenderEv);
+  ok(cr.anthropicModels.map((m) => m.id).join(",") === "claude-opus-5,claude-haiku-4-5-20251001,claude-opus-4-8",
+     "the Anthropic models of the ccd surface are remembered for the web-search select: " + cr.anthropicModels.map((m) => m.id).join(","));
+  const bad = await h["cdb-cm:websearch-set"](okSenderEv, "claude-nope-9");
+  ok(bad.ok === false && /not one of the Anthropic models/.test(bad.error), "an Anthropic id the picker does not list is refused once a bootstrap was seen");
 
   // A surface whose menu carries mode options (cowork) gets effort_and_mode
   // with those options copied; a surface with no template falls back to
@@ -268,8 +275,8 @@ function bootstrap() {
   ok(env.CDB_CUSTOM_MODELS_LOG === join(dir, "logs", "custom-models.log"), "the CLI log lands in <userData>/logs/");
   const payload = JSON.parse(env.CDB_CUSTOM_MODELS_JSON);
   ok(payload.providers.length === 1 && payload.providers[0].apiKey === "sk-test-1234567890" &&
-     payload.providers[0].baseUrl === "https://api.deepseek.com/anthropic" && payload.providers[0].webSearch === "deepseek-flash",
-     "the payload carries endpoint, key and web-search route");
+     payload.providers[0].baseUrl === "https://api.deepseek.com/anthropic" && payload.webSearch === "claude-deepseek-flash",
+     "the payload carries endpoint, key, and the app-wide web-search route (resolved from the legacy per-provider key)");
   ok(payload.providers[0].models.length === 2 && payload.providers[0].models[1].thinking === false,
      "the payload carries the per-model routing flags");
   ok(!("name" in payload.providers[0].models[0]), "picker-only fields stay out of the CLI payload");
@@ -322,14 +329,15 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   f.listeners["did-start-navigation"]({ url: "https://claude.ai/code", isMainFrame: true });
   ok(f.wc.debugger.attached === 1, "a claude.ai main-frame navigation attaches exactly once");
   const enable = f.sent.find((s) => s.method === "Fetch.enable");
-  ok(!!enable && enable.params.patterns.every((p) => p.requestStage === "Response" && /(api|edge-api)\/bootstrap/.test(p.urlPattern)),
-     "Fetch.enable pauses only bootstrap responses");
+  ok(!!enable && enable.params.patterns.every((p) => p.requestStage === "Response" && /(api|edge-api)\/bootstrap|model_selector_state/.test(p.urlPattern)),
+     "Fetch.enable pauses only bootstrap and model-selection responses");
   ok(!!enable && enable.params.patterns.some((p) => p.urlPattern === "*://claude.ai/edge-api/bootstrap/*/app_start*") &&
      enable.params.patterns.some((p) => p.urlPattern === "*://claude.ai/api/bootstrap/*/app_start*") &&
      enable.params.patterns.some((p) => p.urlPattern === "*://claude.ai/api/bootstrap"),
      "both the /api and the /edge-api spellings of app_start (and the bare endpoint) are covered");
-  ok(!!enable && !enable.params.patterns.some((p) => /model_selector_state|user_settings/.test(p.urlPattern)),
-     "the debug-only patterns are not armed outside CDB_CUSTOM_MODELS_DEBUG");
+  ok(!!enable && !enable.params.patterns.some((p) => /bootstrap\/\*\/(system_prompts|current_user_access)/.test(p.urlPattern)) &&
+     enable.params.patterns.some((p) => p.urlPattern === "*://claude.ai/api/organizations/*/model_selector_state/*"),
+     "the other bootstrap sub-resources are not paused; the model-selection writes are");
 
   // A 200 bootstrap: fulfilled with the enriched body, hop headers dropped.
   const body = JSON.stringify(bootstrap());
@@ -383,7 +391,7 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
 // --- the Models panel's IPC: editing, secrets, locks -------------------------
 {
   const dir = mkdtempSync(join(tmpdir(), "cdb-cm-main-"));
-  const { h, sandbox } = load(dir);
+  const { h, sandbox, api } = load(dir);
   let r = await h["cdb-cm:config-read"](okSenderEv);
   ok(r.ok === true && r.configured === false && r.providers.length === 0 && Array.isArray(r.presets) && r.presets[0].id === "deepseek",
      "config-read on an empty profile: nothing configured, presets offered");
@@ -396,9 +404,10 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic/", apiKey: "short" });
   ok(r.ok === false && /API key/.test(r.error), "a five-character key is refused");
 
-  r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic/", apiKey: "sk-secret-1234567890", webSearch: "deepseek-flash" });
+  r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic/", apiKey: "sk-secret-1234567890" });
   ok(r.ok === true && r.providers.length === 1 && r.providers[0].id === "ds" && r.providers[0].keyOk === true && r.providers[0].keySource === "stored",
      "provider-set adds the provider with a stored key");
+  ok(r.webSearch === "" && r.webSearchLocked === false, "web search defaults to Anthropic");
   ok(r.configured === false && r.providers[0].models.length === 0, "a provider without a model is listed but not usable");
   const json = JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8"));
   ok(json.customModels.providers[0].apiKeyStored === true && !("apiKey" in json.customModels.providers[0]) &&
@@ -428,9 +437,29 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
 
   // Editing the provider without a key keeps the stored one; the enabled
   // switch now works since a model exists.
-  r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "", webSearch: "" });
-  ok(r.ok === true && r.providers[0].keyOk === true && r.providers[0].keySource === "stored" && r.providers[0].webSearch === "",
-     "an empty key field keeps the stored key; an empty web-search clears it");
+  r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "" });
+  ok(r.ok === true && r.providers[0].keyOk === true && r.providers[0].keySource === "stored",
+     "an empty key field keeps the stored key");
+  r = await h["cdb-cm:websearch-set"](okSenderEv, "nope");
+  ok(r.ok === false && /neither/.test(r.error), "web search only accepts a configured model or an Anthropic id");
+  r = await h["cdb-cm:websearch-set"](okSenderEv, "claude-opus-5");
+  ok(r.ok === true && r.webSearch === "claude-opus-5" && JSON.parse(api.cliEnv().CDB_CUSTOM_MODELS_JSON).webSearch === "claude-opus-5",
+     "an Anthropic id is accepted as the web-search target and handed to the CLI");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "nosearch", webSearch: false });
+  ok(r.ok === true && r.providers[0].models[1].webSearch === false, "a model can be marked without the web search tool");
+  r = await h["cdb-cm:websearch-set"](okSenderEv, "nosearch");
+  ok(r.ok === false && /without the web search tool/.test(r.error), "and is then refused as the web-search target");
+  ok(JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[1].webSearch === false,
+     "webSearch:false is written out");
+  await h["cdb-cm:model-delete"](okSenderEv, "ds", "nosearch");
+  r = await h["cdb-cm:websearch-set"](okSenderEv, "deepseek-flash");
+  ok(r.ok === true && r.webSearch === "claude-deepseek-flash", "websearch-set stores the alias");
+  ok(JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.webSearch === "claude-deepseek-flash",
+     "as customModels.webSearch in the .json");
+  ok(JSON.parse(api.cliEnv().CDB_CUSTOM_MODELS_JSON).webSearch === "claude-deepseek-flash", "and hands it to the CLI");
+  r = await h["cdb-cm:websearch-set"](okSenderEv, "");
+  ok(r.ok === true && r.webSearch === "" && !("webSearch" in JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels),
+     "an empty value goes back to Anthropic and drops the key");
   r = await h["cdb-cm:pref-set"](okSenderEv, false);
   ok(r.ok === true && r.enabled === false, "the switch works once a model exists");
   ok(JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers.length === 1,
@@ -478,12 +507,105 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   ok(r.ok === false && /already used/.test(r.error), "a model id already served by another provider is refused");
   r = await h["cdb-cm:model-set"](okSenderEv, "gw", { id: "gw-model", name: "GW" });
   ok(r.ok === true && r.models === 3, "three models across both providers");
+  ok(r.webSearch === "claude-deepseek-flash" && r.webSearchLocked === false,
+     "a per-provider webSearch in the .jsonc is honoured as the app-wide value but does not lock the select");
+  writeFileSync(join(dir, "claude-desktop-extra.jsonc"), PROVIDERS.replace('"providers"', '"webSearch": "gw-model",\n    "providers"'));
+  r = await h["cdb-cm:websearch-set"](okSenderEv, "deepseek-flash");
+  ok(r.ok === false && /claude-desktop-extra\.jsonc/.test(r.error), "a top-level webSearch in the .jsonc locks the select");
+  ok(api.readConfig().webSearch === "claude-gw-model", "and wins");
   const cfg = api.readConfig();
   ok(cfg.providers.length === 2 && cfg.providers[1].apiKey === "sk-gw-1234567890" && cfg.providers[1].keySource === "stored",
      "the routing config resolves the stored key of the .json provider");
   const env = api.cliEnv();
   const payload = JSON.parse(env.CDB_CUSTOM_MODELS_JSON);
   ok(payload.providers.length === 2 && payload.providers[1].apiKey === "sk-gw-1234567890", "and hands it to the CLI");
+  rmSync(dir, { recursive: true, force: true });
+}
+
+
+// --- remembered selection: the page's PATCH and the next bootstrap ---------------
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-cm-main-"));
+  writeFileSync(join(dir, "claude-desktop-extra.jsonc"), PROVIDERS);
+  const { api, on } = load(dir);
+  const cfg = api.readConfig();
+  const serverState = { id: "code", model: "claude-opus-5", thinking: { type: "effort", effort: "high" },
+    thinking_by_model: [{ id: "claude-opus-5", thinking: { type: "effort", effort: "high" } }] };
+  api.rememberServerState({ model_selector_state: [serverState] });
+
+  // Pure decisions, in the shapes captured from claude.ai on 2026-09-13.
+  const REFUSED = 400;
+  let out = api.selectionOutcome("code", "PATCH", JSON.stringify({ model: "claude-deepseek-flash", thinking: { type: "effort", effort: "max" } }), REFUSED, cfg, {});
+  ok(out.choices && out.choices.code.model === "claude-deepseek-flash" && out.choices.code.thinking.effort === "max",
+     "a refused PATCH for one of ours is remembered with its thinking");
+  ok(out.reply && out.reply.id === "code" && out.reply.model === "claude-deepseek-flash" &&
+     out.reply.thinking_by_model.length === 2 && out.reply.thinking_by_model[1].id === "claude-deepseek-flash" &&
+     out.reply.thinking_by_model[0].id === "claude-opus-5", "and answered in the server's shape, keeping the other models' thinking");
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ model: "claude-deepseek-flash" }), REFUSED, cfg, {});
+  ok(out.choices.code.thinking && out.choices.code.thinking.effort === "xhigh", "no thinking in the request: the model's default effort is used");
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ model: "claude-opus-4-8" }), REFUSED, cfg, { code: { model: "claude-deepseek-flash" } });
+  ok(out.choices === null && out.reply === null, "a refused PATCH for an Anthropic model is not ours to answer");
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ model: "claude-opus-5" }), 200, cfg, { code: { model: "claude-deepseek-flash" } });
+  ok(out.choices && !("code" in out.choices) && out.reply === null, "an accepted PATCH drops the memory for that surface");
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ model: "claude-opus-5" }), 200, cfg, {});
+  ok(out.choices === null, "and changes nothing when there was none");
+  out = api.selectionOutcome("code", "GET", "", 200, cfg, {});
+  ok(out.choices === null && out.reply === null, "only PATCH is looked at");
+  out = api.selectionOutcome("code", "PATCH", "not json", REFUSED, cfg, {});
+  ok(out.choices === null && out.reply === null, "an unreadable body is left alone");
+
+  // The next bootstrap carries the choice as the server would.
+  const boot = bootstrap();
+  boot.model_selector_state = [JSON.parse(JSON.stringify(serverState)), { id: "chat", model: "claude-opus-5" }];
+  const enriched = api.enrichBootstrap(boot, cfg, { code: { model: "claude-deepseek-flash", thinking: { type: "effort", effort: "max" } } });
+  const st = enriched.model_selector_state[0];
+  ok(st.model === "claude-deepseek-flash" && st.thinking.effort === "max", "the code state now names our model and its effort");
+  ok(st.thinking_by_model.length === 2 && st.thinking_by_model[1].id === "claude-deepseek-flash", "and lists it in thinking_by_model");
+  ok(enriched.model_selector_state[1].model === "claude-opus-5", "other surfaces are untouched");
+  const boot2 = bootstrap();
+  boot2.model_selector_state = [JSON.parse(JSON.stringify(serverState))];
+  const e2 = api.enrichBootstrap(boot2, cfg, { code: { model: "claude-gone" } });
+  ok(e2.model_selector_state[0].model === "claude-opus-5", "a remembered model that is no longer configured is ignored");
+
+  // Through the CDP flow: a refused PATCH is fulfilled, the store written, and
+  // the following bootstrap replays it.
+  const f = fakeWc("https://claude.ai/code");
+  on["web-contents-created"]({}, f.wc);
+  f.listeners["did-start-navigation"]({ url: "https://claude.ai/code", isMainFrame: true });
+  f.sent.length = 0;
+  f.wc.__body = { body: JSON.stringify({ error: { details: { error_code: "model_not_selectable" } } }), base64Encoded: false };
+  f.dbgListeners.message({}, "Fetch.requestPaused", {
+    requestId: "p1", responseStatusCode: 400, responseHeaders: [],
+    request: { url: "https://claude.ai/api/organizations/org-1/model_selector_state/code", method: "PATCH",
+      postData: JSON.stringify({ model: "claude-deepseek-flash", thinking: { type: "effort", effort: "max" } }) }
+  });
+  await settle();
+  const ful = f.sent.find((s) => s.method === "Fetch.fulfillRequest");
+  ok(!!ful && ful.params.requestId === "p1" && ful.params.responseCode === 200 &&
+     JSON.parse(Buffer.from(ful.params.body, "base64").toString("utf8")).model === "claude-deepseek-flash",
+     "the refused PATCH is answered 200 with our model");
+  const stored = JSON.parse(readFileSync(join(dir, "custom-models", "selection.json"), "utf8"));
+  ok(stored.code && stored.code.model === "claude-deepseek-flash", "the choice is written to custom-models/selection.json");
+  f.sent.length = 0;
+  const b3 = bootstrap();
+  b3.model_selector_state = [JSON.parse(JSON.stringify(serverState))];
+  f.wc.__body = { body: JSON.stringify(b3), base64Encoded: false };
+  f.dbgListeners.message({}, "Fetch.requestPaused", { requestId: "b1", request: { url: "https://claude.ai/edge-api/bootstrap/org-1/app_start" },
+    responseStatusCode: 200, responseHeaders: [] });
+  await settle();
+  const ful2 = f.sent.find((s) => s.method === "Fetch.fulfillRequest");
+  const replayed = ful2 && JSON.parse(Buffer.from(ful2.params.body, "base64").toString("utf8"));
+  ok(replayed && replayed.model_selector_state[0].model === "claude-deepseek-flash", "the next bootstrap replays the choice");
+  f.sent.length = 0;
+  f.wc.__body = { body: JSON.stringify({ id: "code", model: "claude-opus-5", thinking_by_model: [] }), base64Encoded: false };
+  f.dbgListeners.message({}, "Fetch.requestPaused", {
+    requestId: "p2", responseStatusCode: 200, responseHeaders: [],
+    request: { url: "https://claude.ai/api/organizations/org-1/model_selector_state/code", method: "PATCH", postData: JSON.stringify({ model: "claude-opus-5" }) }
+  });
+  await settle();
+  ok(f.sent.some((s) => s.method === "Fetch.continueRequest" && s.params.requestId === "p2") && !f.sent.some((s) => s.method === "Fetch.fulfillRequest"),
+     "an accepted PATCH passes through untouched");
+  ok(!("code" in JSON.parse(readFileSync(join(dir, "custom-models", "selection.json"), "utf8"))), "and forgets our choice for that surface");
   rmSync(dir, { recursive: true, force: true });
 }
 

@@ -87,15 +87,29 @@
     return k.length > 8;
   }
   // The CLI's web-search sub-request (one server tool, normally answered by a
-  // small Claude model) can be handed to one of the custom models instead:
-  // provider.webSearch = "<model id>". Only the first provider that asks wins.
+  // small Claude model) can be handed to one of the custom models instead.
+  // App-wide: cfg.webSearch = "<model id or alias>"; a per-provider
+  // webSearch (configs written before it was global) is the fallback.
+  // A custom target is a route; an Anthropic target (claude-opus-5...) is a
+  // model name substituted into the sub-request, which then goes to Anthropic
+  // as usual with the session's own credentials.
   var webSearchRoute = null;
-  providers.some(function (p) {
+  var webSearchAnthropic = "";
+  if (typeof cfg.webSearch === "string" && cfg.webSearch.trim()) {
+    var wsWant = cfg.webSearch.trim();
+    webSearchRoute = routes.get(exposedId(wsWant)) || null;
+    if (!webSearchRoute && /^claude-[a-z0-9][a-z0-9.-]{0,60}$/.test(wsWant)) webSearchAnthropic = wsWant;
+  }
+  if (!webSearchRoute && !webSearchAnthropic) providers.some(function (p) {
     if (!p || typeof p.webSearch !== "string") return false;
     var r = routes.get(exposedId(p.webSearch.trim()));
     if (r && r.provider === p) { webSearchRoute = r; return true; }
     return false;
   });
+  function isWebSearchSubRequest(body) {
+    return Array.isArray(body.tools) && body.tools.length === 1 && body.tools[0] &&
+      /^web_search/.test(body.tools[0].type || "");
+  }
 
   // ---- request sanitising -------------------------------------------------
   // The target is an Anthropic-COMPATIBLE endpoint, not Anthropic: only the
@@ -191,7 +205,8 @@
     if (Array.isArray(body.tools)) {
       var tools = body.tools.filter(function (t) {
         return t && typeof t.name === "string" &&
-          ((t.input_schema && typeof t.input_schema === "object") || /^web_search/.test(t.type || ""));
+          ((t.input_schema && typeof t.input_schema === "object") ||
+            (/^web_search/.test(t.type || "") && m.webSearch !== false));
       }).map(function (t) {
         return /^web_search/.test(t.type || "")
           ? { type: t.type, name: t.name }
@@ -263,7 +278,7 @@
     var isMessages = /\/v1\/messages$/.test(pathname);
     var isCount = /\/v1\/messages\/count_tokens$/.test(pathname);
     if (!isMessages && !isCount) return null;
-    var maybeWebSearch = !!webSearchRoute && isMessages && init.body.indexOf('"web_search') !== -1;
+    var maybeWebSearch = (!!webSearchRoute || !!webSearchAnthropic) && isMessages && init.body.indexOf('"web_search') !== -1;
     if (!quickMatch(init.body) && !maybeWebSearch) return null;
 
     var body = JSON.parse(init.body);
@@ -273,10 +288,17 @@
     // The exact shape of the CLI's web-search sub-request: a single tool, the
     // server-side web_search one. A conversation listing web_search among other
     // tools is not touched.
-    if (!r && maybeWebSearch && Array.isArray(body.tools) && body.tools.length === 1 &&
-        body.tools[0] && /^web_search/.test(body.tools[0].type || "")) {
-      r = webSearchRoute;
-      viaWebSearch = true;
+    if (!r && maybeWebSearch && isWebSearchSubRequest(body)) {
+      if (webSearchRoute) {
+        r = webSearchRoute;
+        viaWebSearch = true;
+      } else if (webSearchAnthropic && requested !== webSearchAnthropic) {
+        // Another Anthropic model for the search: same request, same
+        // credentials, only the model name changes.
+        body.model = webSearchAnthropic;
+        log("web search -> " + webSearchAnthropic + " (instead of " + requested + ", Anthropic)");
+        return rawFetch(input, Object.assign({}, init, { body: JSON.stringify(body) }));
+      }
     }
     if (!r) return null;
     var p = r.provider, m = r.model;
@@ -345,7 +367,8 @@
 
   var names = [];
   routes.forEach(function (r, alias) { names.push(alias + " -> " + r.provider.id + "/" + r.model.id); });
-  log("active: " + names.join(", ") + (webSearchRoute ? "; web search -> " + webSearchRoute.model.id : ""));
+  log("active: " + names.join(", ") + (webSearchRoute ? "; web search -> " + webSearchRoute.model.id
+    : (webSearchAnthropic ? "; web search -> " + webSearchAnthropic + " (Anthropic)" : "")));
 
   if (SELFTEST) {
     globalThis.__cdbCustomModelsPreload = { sanitize: sanitize, route: route, routes: routes, rawFetch: rawFetch };

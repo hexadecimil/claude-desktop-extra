@@ -2119,6 +2119,56 @@
         host.appendChild(flip);
       }
 
+      // --- web search: one app-wide choice ------------------------------------
+      // The CLI answers every web search with a separate one-tool request to a
+      // small Anthropic model, whatever the session's model. This picks the
+      // custom model that request goes to instead - or leaves it to Anthropic.
+      var hw = el("div", "cdbx-sec-h");
+      hw.appendChild(el("span", "cdbx-sec-t", "Web search"));
+      host.appendChild(hw);
+      var wsRow = el("div", "cdbx-row");
+      var wsMain = el("div", "cdbx-row-main");
+      wsMain.appendChild(el("div", "cdbx-id", "Web search model"));
+      wsMain.appendChild(el("div", "cdbx-note",
+        "Every web search in a Code session is a separate request the CLI sends to a small Anthropic " +
+        "model, whatever model the session uses. Answer those with one of your custom models instead " +
+        "(no Anthropic usage for searches), with another Claude model, or keep the default. Only models " +
+        "that have the web search tool are offered. Applies to sessions started after the change."));
+      wsRow.appendChild(wsMain);
+      var wsAside = el("div", "cdbx-row-aside");
+      var wsSel = el("select", "cdbx-select");
+      var wsNone = el("option", "", "Anthropic's default (a small Claude model)");
+      wsNone.value = "";
+      wsSel.appendChild(wsNone);
+      (st.providers || []).forEach(function (p) {
+        p.models.forEach(function (m) {
+          if (m.webSearch === false) return;
+          var o = el("option", "", p.id + " / " + m.name);
+          o.value = m.alias;
+          wsSel.appendChild(o);
+        });
+      });
+      (st.anthropicModels || []).forEach(function (m) {
+        var o = el("option", "", "Anthropic / " + m.name);
+        o.value = m.id;
+        wsSel.appendChild(o);
+      });
+      wsSel.value = st.webSearch || "";
+      if (wsSel.value !== (st.webSearch || "")) wsSel.value = "";
+      wsSel.disabled = !!st.webSearchLocked;
+      if (st.webSearchLocked) wsSel.title = "Set in claude-desktop-extra.jsonc - edit that file to change it";
+      wsSel.addEventListener("change", function () {
+        wsSel.disabled = true;
+        call("customModelsWebSearchSet", wsSel.value).then(function (okd) {
+          if (okd) toast(wsSel.value ? "Web searches now go to " + wsSel.options[wsSel.selectedIndex].textContent
+            : "Web searches back on Anthropic's default");
+          else wsSel.disabled = false;
+        });
+      });
+      wsAside.appendChild(wsSel);
+      wsRow.appendChild(wsAside);
+      host.appendChild(wsRow);
+
       // --- providers ----------------------------------------------------------
       var h = el("div", "cdbx-sec-h");
       h.appendChild(el("span", "cdbx-sec-t", "Providers"));
@@ -2129,11 +2179,16 @@
       }
       (st.providers || []).forEach(function (p) { host.appendChild(providerCard(p, st)); });
 
-      // --- add a provider -------------------------------------------------------
-      var h2 = el("div", "cdbx-sec-h");
-      h2.appendChild(el("span", "cdbx-sec-t", "Add a provider"));
-      host.appendChild(h2);
-      host.appendChild(providerForm(null, st));
+      // --- add a provider: a button, the form opens under it like Add a model
+      var addProv = el("button", "cdbx-btn cdbx-models-add-provider", "Add a provider");
+      addProv.type = "button";
+      addProv.addEventListener("click", function () {
+        if (host.querySelector(".cdbx-models-form-provider-new")) return;
+        var f = providerForm(null, st);
+        f.classList.add("cdbx-models-form-provider-new");
+        host.insertBefore(f, addProv.nextSibling);
+      });
+      host.appendChild(addProv);
 
       var files = el("div", "cdbx-note cdbx-models-files",
         "Written to " + (st.paths && st.paths.json) + "; keys to " + (st.paths && st.paths.secrets) +
@@ -2147,12 +2202,12 @@
       var head = el("div", "cdbx-row");
       var main = el("div", "cdbx-row-main");
       main.appendChild(el("div", "cdbx-id", p.id + (p.locked ? " - set in claude-desktop-extra.jsonc" : "")));
-      main.appendChild(el("div", "cdbx-note", p.baseUrl));
+      main.appendChild(el("div", "cdbx-note", p.baseUrl +
+        (p.locked ? " - locked: this provider and its models are edited in that file, not here" : "")));
       var keyLine = p.keyOk
         ? "API key: " + ({ value: "in the config file", env: "from the environment", file: "from a key file", stored: "stored" })[p.keySource]
         : "API key: MISSING - sessions on these models fail until one is set";
-      main.appendChild(el("div", "cdbx-state" + (p.keyOk ? "" : " cdbx-models-warn"), keyLine +
-        (p.webSearch ? " - web search on " + p.webSearch : "")));
+      main.appendChild(el("div", "cdbx-state" + (p.keyOk ? "" : " cdbx-models-warn"), keyLine));
       head.appendChild(main);
       var aside = el("div", "cdbx-row-aside");
       var test = el("button", "cdbx-clear", "test");
@@ -2211,6 +2266,7 @@
         traits.push("in the picker as " + m.alias);
         traits.push(m.thinking ? "thinking, default effort " + m.effortDefault : "no thinking");
         traits.push(m.vision ? "images" : "no images");
+        traits.push(m.webSearch === false ? "no web search tool" : "web search tool");
         if (m.context1m) traits.push("1M twin");
         if (m.badge) traits.push("badge \"" + m.badge + "\"");
         rm.appendChild(el("div", "cdbx-note", traits.join(" - ")));
@@ -2303,8 +2359,6 @@
         "The Anthropic-compatible endpoint; /v1/messages is appended.");
       var key = field(form, "API key", input("password", "", existing && existing.keyOk ? "stored - type to replace" : "sk-..."),
         "Stored in a 0600 file in this profile, never shown again, sent only to that endpoint.");
-      var ws = field(form, "Web search model", input("text", existing ? existing.webSearch : "", "optional, e.g. deepseek-flash"),
-        "Optional: the CLI's web-search sub-request (normally a small Claude model) goes to this model of the provider instead.");
       if (preset) {
         preset.addEventListener("change", function () {
           var pr = null;
@@ -2313,7 +2367,6 @@
           id.value = pr.id;
           url.value = pr.baseUrl;
           key.placeholder = pr.keyHint || "sk-...";
-          if (pr.models && pr.models.length) ws.value = pr.models[0].id;
         });
       }
       var actions = el("div", "cdbx-models-actions");
@@ -2321,19 +2374,25 @@
       save.type = "button";
       save.addEventListener("click", function () {
         save.disabled = true;
-        var payload = { id: id.value, baseUrl: url.value, apiKey: key.value, webSearch: ws.value };
+        var payload = { id: id.value, baseUrl: url.value, apiKey: key.value };
         var pr = null;
         if (preset && preset.value) st.presets.forEach(function (x) { if (x.id === preset.value) pr = x; });
+        // A preset brings its models along on first creation, so a provider
+        // is usable right after one Add click; by hand, the card's "Add a
+        // model" is the next step.
+        var models = [];
+        if (!existing && pr && pr.models) pr.models.forEach(function (m) { models.push(Object.assign({}, m)); });
         api.customModelsProviderSet(payload).then(function (r) {
           if (failed(r)) { save.disabled = false; toast("Could not save: " + reason(r), true); return; }
-          // A preset also brings its models along on first creation, so a
-          // provider is usable right after one Add click.
-          if (!existing && pr && pr.models) {
+          if (models.length) {
             var chain = Promise.resolve(r);
-            pr.models.forEach(function (m) {
+            models.forEach(function (m) {
               chain = chain.then(function () { return api.customModelsModelSet(payload.id.trim(), m); });
             });
-            return chain.then(function (last) { refresh(last); toast("Provider " + payload.id.trim() + " added with " + pr.models.length + " model(s)"); });
+            return chain.then(function (last) {
+              refresh(last);
+              toast("Provider " + payload.id.trim() + " added with " + models.length + " model" + (models.length === 1 ? "" : "s"));
+            });
           }
           refresh(r);
           toast(existing ? "Provider " + existing.id + " saved" : "Provider " + payload.id.trim() + " added - now add a model to it");
@@ -2343,12 +2402,10 @@
         });
       });
       actions.appendChild(save);
-      if (existing) {
-        var cancel = el("button", "cdbx-clear", "cancel");
-        cancel.type = "button";
-        cancel.addEventListener("click", function () { form.remove(); });
-        actions.appendChild(cancel);
-      }
+      var cancel = el("button", "cdbx-clear", "cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", function () { form.remove(); });
+      actions.appendChild(cancel);
       form.appendChild(actions);
       return form;
     }
@@ -2375,6 +2432,9 @@
       field(form, "Default effort", effort, "The level the picker preselects. xhigh reaches DeepSeek as max (its benchmark setting).");
       var vision = field(form, "Images", checkbox(existing ? existing.vision : true),
         "Off: images are replaced by a placeholder line before the request leaves.");
+      var webSearch = field(form, "Web search tool", checkbox(existing ? existing.webSearch !== false : true),
+        "Whether the provider runs the web_search tool for this model (DeepSeek's /anthropic API does). " +
+        "Off: the tool is stripped from its requests and it is not offered as the web-search model.");
       var context1m = field(form, "1M twin", checkbox(existing ? existing.context1m : false),
         "Also list a \"<name> 1M\" entry, the way Sonnet/Opus 1M are listed. Pointless for a model whose context is 1M natively.");
       var badge = field(form, "Badge", input("text", existing ? existing.badge : "", "optional, e.g. beta"),
@@ -2385,7 +2445,8 @@
       save.addEventListener("click", function () {
         save.disabled = true;
         var payload = { id: id.value, name: name.value, description: desc.value, badge: badge.value,
-          thinking: thinking.checked, vision: vision.checked, context1m: context1m.checked, effortDefault: effort.value };
+          thinking: thinking.checked, vision: vision.checked, webSearch: webSearch.checked,
+          context1m: context1m.checked, effortDefault: effort.value };
         call("customModelsModelSet", p.id, payload).then(function (okd) {
           if (!okd) save.disabled = false;
           else toast(existing ? "Model " + existing.id + " saved" : "Model " + payload.id.trim() + " added to " + p.id);

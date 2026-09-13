@@ -54,6 +54,10 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
   "enabled": true,               // the switch. Absent = on as soon as a model is configured.
                                  // Set HERE it locks the Settings switch; the switch itself writes
                                  // claude-desktop-extra.json.
+  "webSearch": "deepseek-flash", // app-wide: every web search in a Code session is a separate
+                                 // one-tool request the CLI sends to a small Claude model, whatever
+                                 // the session's model. Name a custom model (id or claude-<id>) or
+                                 // any Anthropic id (claude-opus-5) to send those there instead.
   "surfaces": ["ccd"],           // which pickers list them, as the bootstrap names them: "ccd" is
                                  // the desktop Code tab, "ccr" Claude Code on the web, then "chat",
                                  // "cowork", "design"... Default: ccd only - a Cowork session runs
@@ -66,9 +70,6 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
       "apiKeyFile": "~/.config/deepseek.key",            // app's environment), or apiKeyFile (trimmed),
                                                          // or apiKeyStored: true (the panel's secrets file)
       "headers": { "x-extra": "1" },                     // optional, added to every request
-      "webSearch": "deepseek-flash",                     // optional: the CLI's web-search sub-request
-                                                         // (one server tool, normally a small Claude
-                                                         // model) goes to this model instead
       "effortMap": { "xhigh": "high" },                  // optional, see Effort below
       "models": [
         {
@@ -81,6 +82,9 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
                                       // context is 1M natively - leave it off
           "vision": true,             // false: images are replaced by a placeholder line
           "thinking": true,           // false: no effort menu, no Thinking switch, thinking always off
+          "webSearch": true,          // false: the provider does not run the web_search tool for it -
+                                      // the tool is stripped from its requests, and it is not offered
+                                      // as the app-wide web-search model
           "effort": ["low", "medium", "high", "xhigh", "max"],  // levels to offer (default: all five)
           "effortDefault": "xhigh"    // the recommended one (default: xhigh when offered)
         }

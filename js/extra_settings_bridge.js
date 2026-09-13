@@ -142,9 +142,11 @@
     },
     customModelsProviderSet: function (provider) {
       return ipcRenderer.invoke("cdb-cm:provider-set", provider && typeof provider === "object" ? {
-        id: String(provider.id || ""), baseUrl: String(provider.baseUrl || ""),
-        apiKey: String(provider.apiKey || ""), webSearch: String(provider.webSearch || "")
+        id: String(provider.id || ""), baseUrl: String(provider.baseUrl || ""), apiKey: String(provider.apiKey || "")
       } : {});
+    },
+    customModelsWebSearchSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:websearch-set", String(value || ""));
     },
     customModelsProviderDelete: function (id) {
       return ipcRenderer.invoke("cdb-cm:provider-delete", String(id || ""));
@@ -153,7 +155,7 @@
       return ipcRenderer.invoke("cdb-cm:model-set", String(providerId || ""), model && typeof model === "object" ? {
         id: String(model.id || ""), name: String(model.name || ""), description: String(model.description || ""),
         badge: String(model.badge || ""), thinking: model.thinking !== false, vision: model.vision !== false,
-        context1m: model.context1m === true, effortDefault: String(model.effortDefault || "")
+        webSearch: model.webSearch !== false, context1m: model.context1m === true, effortDefault: String(model.effortDefault || "")
       } : {});
     },
     customModelsModelDelete: function (providerId, modelId) {
