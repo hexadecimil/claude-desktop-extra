@@ -2475,9 +2475,11 @@
       });
       levelsBox.appendChild(detect);
       field(form, "Effort levels", levelsBox,
-        "The levels this provider's API accepts under the app's names - the same for all its models. " +
-        "Only those appear in the picker's effort menu, sent as they are. A preset fills it in; detect asks " +
-        "the provider. A level it still refuses is dropped from that request and logged.");
+        "The levels this provider's API distinguishes under the app's names - the same for all its models. " +
+        "Only those appear in the picker's effort menu, sent as they are. A preset fills it in from the " +
+        "provider's documentation; detect asks the provider, which tells strict APIs (a refused name is a " +
+        "400) but not permissive ones that accept every name and fold the extra ones (DeepSeek does). A level " +
+        "still refused at run time is dropped from that request and logged.");
       var chosenPreset = existing ? existing.preset || "" : "";
       if (preset) {
         preset.addEventListener("change", function () {
