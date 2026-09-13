@@ -730,4 +730,5 @@
 .cdbx-models-fetched { margin: 8px 12px; padding: 8px 10px; border: 1px dashed color-mix(in srgb, currentColor 22%, transparent); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
 .cdbx-models-fetched .cdbx-models-actions { padding: 6px 0 0; }
 .cdbx-models-fetched .cdbx-models-filter { margin: 2px 0 6px; max-width: 320px; }
+.cdbx-models-testline { margin-top: 4px; }
 .cdbx-models-fetched { max-height: 360px; overflow-y: auto; }

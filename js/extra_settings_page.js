@@ -2209,24 +2209,37 @@
         : "API key: MISSING - sessions on these models fail until one is set";
       main.appendChild(el("div", "cdbx-state" + (p.keyOk ? "" : " cdbx-models-warn"), keyLine +
         " - effort levels " + (p.effort || []).join("/")));
+      // The result of the last test, on the card itself: a toast alone is
+      // gone in seconds and sits far from the button.
+      var testLine = el("div", "cdbx-note cdbx-models-testline");
+      testLine.hidden = true;
+      main.appendChild(testLine);
       head.appendChild(main);
       var aside = el("div", "cdbx-row-aside");
       var test = el("button", "cdbx-clear", "test");
       test.type = "button";
       test.title = "Send one token to the first model with the stored key";
-      test.disabled = !p.keyOk || !p.models.length;
+      function showTest(text, bad) {
+        testLine.textContent = text;
+        testLine.className = "cdbx-note cdbx-models-testline" + (bad ? " cdbx-models-warn" : "");
+        testLine.hidden = false;
+        toast(text, bad);
+      }
       test.addEventListener("click", function () {
+        // Never a silent button: what is missing is said instead.
+        if (!p.keyOk) { showTest("Provider " + p.id + ": no API key - edit the provider and paste one", true); return; }
+        if (!p.models.length) { showTest("Provider " + p.id + ": add a model first (test sends one token to the first model)", true); return; }
         test.disabled = true;
         test.textContent = "testing...";
         api.customModelsTest(p.id).then(function (r) {
           test.disabled = false;
           test.textContent = "test";
-          if (failed(r)) toast("Provider " + p.id + ": " + reason(r), true);
-          else toast("Provider " + p.id + " answered (" + r.model + ", HTTP " + r.status + ")");
+          if (failed(r)) showTest("Provider " + p.id + ": " + reason(r), true);
+          else showTest("Provider " + p.id + " answered (" + r.model + ", HTTP " + r.status + ")");
         }, function (err) {
           test.disabled = false;
           test.textContent = "test";
-          toast("Provider " + p.id + ": " + (err && err.message ? err.message : String(err)), true);
+          showTest("Provider " + p.id + ": " + (err && err.message ? err.message : String(err)), true);
         });
       });
       aside.appendChild(test);
@@ -2240,11 +2253,12 @@
         aside.appendChild(edit);
         var del = el("button", "cdbx-clear", "remove");
         del.type = "button";
+        del.title = "Removes the provider and its models; the key stays in secrets.json";
         del.addEventListener("click", function () {
           if (!del.classList.contains("cdbx-armed")) {
             del.classList.add("cdbx-armed");
-            del.textContent = "remove?";
-            setTimeout(function () { del.classList.remove("cdbx-armed"); del.textContent = "remove"; }, 4000);
+            del.textContent = "remove? click again";
+            setTimeout(function () { del.classList.remove("cdbx-armed"); del.textContent = "remove"; }, 8000);
             return;
           }
           call("customModelsProviderDelete", p.id).then(function (okd) {
@@ -2300,9 +2314,9 @@
         // preset's knowledge when there is any; detect covers the rest.
         var fetchBtn = el("button", "cdbx-btn", "Fetch models");
         fetchBtn.type = "button";
-        fetchBtn.disabled = !p.keyOk;
-        fetchBtn.title = p.keyOk ? "Ask the provider which models it serves" : "Set the API key first";
+        fetchBtn.title = "Ask the provider which models it serves";
         fetchBtn.addEventListener("click", function () {
+          if (!p.keyOk) { toast("Provider " + p.id + ": no API key - edit the provider and paste one before fetching its models", true); return; }
           var old = card.querySelector(".cdbx-models-fetched");
           if (old) old.remove();
           fetchBtn.disabled = true;

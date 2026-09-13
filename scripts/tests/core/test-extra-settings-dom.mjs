@@ -916,12 +916,26 @@ async function modelsPanel(modelsItem) {
   const btns = Array.from(panel.querySelectorAll(".cdbx-models-card")[0].querySelectorAll(".cdbx-row-aside button"));
   const test = btns.find((b) => b.textContent === "test");
   ok(!!test && !test.disabled, "test is offered on a provider with a key and a model");
-  if (test) { test.click(); await sleep(40); ok(window.__cmWrites.indexOf("test:deepseek") >= 0, "test calls the bridge"); }
+  if (test) {
+    test.click(); await sleep(40);
+    ok(window.__cmWrites.indexOf("test:deepseek") >= 0, "test calls the bridge");
+    const line = panel.querySelectorAll(".cdbx-models-card")[0].querySelector(".cdbx-models-testline");
+    ok(!!line && !line.hidden && /answered \(deepseek-flash, HTTP 200\)/.test(line.textContent), "the result stays on the card: " + (line && line.textContent));
+  }
+  // The locked card has no key: test says so on the card instead of staying mute.
+  const lockedTest = Array.from(panel.querySelectorAll(".cdbx-models-card")[1].querySelectorAll(".cdbx-row-aside button")).find((b) => b.textContent === "test");
+  if (lockedTest) {
+    window.__cmWrites = [];
+    lockedTest.click(); await sleep(20);
+    const line2 = panel.querySelectorAll(".cdbx-models-card")[1].querySelector(".cdbx-models-testline");
+    ok(!!line2 && !line2.hidden && /no API key/.test(line2.textContent) && window.__cmWrites.indexOf("test:gw") < 0,
+       "test without a key explains instead of calling the bridge: " + (line2 && line2.textContent));
+  }
   const rm = btns.find((b) => b.textContent === "remove");
   if (rm) {
     rm.click();
     await sleep(20);
-    ok(rm.textContent === "remove?" && window.__cmWrites.indexOf("provider-delete:deepseek") < 0, "remove asks for a second click");
+    ok(rm.textContent === "remove? click again" && window.__cmWrites.indexOf("provider-delete:deepseek") < 0, "remove asks for a second click");
     rm.click();
     await sleep(40);
     ok(window.__cmWrites.indexOf("provider-delete:deepseek") >= 0, "the second click deletes");
