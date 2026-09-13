@@ -157,7 +157,7 @@
       return ipcRenderer.invoke("cdb-cm:model-set", String(providerId || ""), model && typeof model === "object" ? {
         id: String(model.id || ""), name: String(model.name || ""), description: String(model.description || ""),
         badge: String(model.badge || ""), thinking: model.thinking !== false, vision: model.vision !== false,
-        webSearch: model.webSearch !== false, context1m: model.context1m === true, effortDefault: String(model.effortDefault || "")
+        webSearch: model.webSearch !== false, context: String(model.context || ""), effortDefault: String(model.effortDefault || "")
       } : {});
     },
     customModelsModelDelete: function (providerId, modelId) {

@@ -140,4 +140,4 @@ Limits: local Code sessions only (an SSH remote or a Cowork VM does not have the
 
 Debugging: `CDB_CUSTOM_MODELS_DEBUG=1` in the app's environment logs every API request the page makes (path only), the surfaces of each bootstrap, the `cliEnv()` calls and the answers to the page's model-selection writes, all under `[custom-models] debug:` in `logs/claude-patches.log`.
 
-Tests: `scripts/tests/community/test-custom-models-main.mjs` (config merge, the panel's IPC and secrets file, picker entries, the CDP flow, the CLI env), `test-custom-models-preload.mjs` (what leaves the CLI: URL, headers, body) and the Models panel scenario of `scripts/tests/core/test-extra-settings-dom.mjs`.
+Tests: `scripts/tests/community/test-custom-models-main.mjs` (config merge, the panel's IPC and secrets file, picker entries, the CDP flow, the CLI env), `test-custom-models-preload.mjs` (what leaves the CLI: URL, headers, body) the Models panel scenario of `scripts/tests/core/test-extra-settings-dom.mjs`, and `scripts/tests/core/test-extra-settings-bridge.mjs` (every field the panel sends reaches the main-side channel).
