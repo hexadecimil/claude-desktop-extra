@@ -680,7 +680,8 @@
       responseHeaders: [{ name: "content-type", value: "application/json" }],
       body: body
     }).then(function () {
-      log("selection: " + out.reply.model + " remembered for surface " + surface + " (claude.ai answered " + params.responseStatusCode + ")");
+      log("selection: " + out.reply.model + " kept locally for surface " + surface + (params.responseStatusCode >= 400
+        ? " (claude.ai does not know that id, HTTP " + params.responseStatusCode + " - expected)" : " (thinking updated)"));
     }, function (e) {
       log("selection: " + (e && e.message ? e.message : String(e)));
       release();
@@ -1184,11 +1185,15 @@
   // the OpenAI shape at <origin>/v1/models and <origin>/models. Both shapes
   // answer {data:[{id, display_name?}]}; the key goes as x-api-key AND
   // Authorization: Bearer, whichever the endpoint reads.
+  // Returns { models, nextAfter } - nextAfter is the cursor of the Anthropic
+  // Models API shape ({data, has_more, last_id}, 20 per page, ?after_id=),
+  // null when the answer is complete.
   function parseModelList(text) {
     var j;
     try { j = JSON.parse(text); } catch (e) { return null; }
     var arr = Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : (j && Array.isArray(j.models) ? j.models : null));
     if (!arr) return null;
+    var nextAfter = j && !Array.isArray(j) && j.has_more === true && typeof j.last_id === "string" && j.last_id ? j.last_id : null;
     var out = [];
     arr.forEach(function (m) {
       var id = isObj(m) ? (typeof m.id === "string" ? m.id : (typeof m.name === "string" ? m.name : "")) : (typeof m === "string" ? m : "");
@@ -1206,7 +1211,7 @@
       if (cl !== null) e.context = cl >= 1000000 ? "1m" : "200k";
       out.push(e);
     });
-    return out;
+    return { models: out, nextAfter: nextAfter };
   }
   _ipc.handle("cdb-cm:models-list", function (ev, providerId) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
@@ -1226,32 +1231,57 @@
     if (origin) candidates.push(origin + "/v1/models", origin + "/models");
     var seen = Object.create(null);
     candidates = candidates.filter(function (u) { if (seen[u]) return false; seen[u] = true; return true; });
-    var headers = { "accept": "application/json", "x-api-key": p.apiKey, "authorization": "Bearer " + p.apiKey, "anthropic-version": "2023-06-01" };
-    if (p.headers) Object.keys(p.headers).forEach(function (k) { if (typeof p.headers[k] === "string") headers[k] = p.headers[k]; });
+    // Two header sets, in this order: the OpenAI/OpenRouter shape (Bearer,
+    // the whole catalogue with context lengths) and, only when that is
+    // refused, the Anthropic Models API (anthropic-version - OpenRouter then
+    // answers in that shape: 20 per page, ids prefixed, no context length).
+    // Anthropic's own endpoint and gateways proxying it need the second.
+    var base = { "accept": "application/json", "x-api-key": p.apiKey, "authorization": "Bearer " + p.apiKey };
+    if (p.headers) Object.keys(p.headers).forEach(function (k) { if (typeof p.headers[k] === "string") base[k] = p.headers[k]; });
+    var headerSets = [base, Object.assign({}, base, { "anthropic-version": "2023-06-01" })];
     var failures = [];
-    function tryNext(i) {
+    var MAX_PAGES = 40;
+    function getJson(url, headers) {
+      var ctl = new AbortController();
+      var timer = setTimeout(function () { ctl.abort(); }, 15000);
+      return fetch(url, { method: "GET", headers: headers, signal: ctl.signal }).then(function (res) {
+        return res.text().then(function (text) { clearTimeout(timer); return { status: res.status, ok: res.ok, text: text }; });
+      }, function (e) {
+        clearTimeout(timer);
+        return { status: 0, ok: false, text: "", error: e && e.name === "AbortError" ? "no answer within 15 s" : (e && e.message ? e.message : String(e)) };
+      });
+    }
+    // Follows has_more/last_id with ?after_id= until the list is complete.
+    function pages(url, headers, acc, after, n) {
+      var u = after ? url + (url.indexOf("?") === -1 ? "?" : "&") + "after_id=" + encodeURIComponent(after) : url;
+      return getJson(u, headers).then(function (r) {
+        if (!r.ok) return { fail: u + " -> " + (r.error || "HTTP " + r.status), models: acc };
+        var page = parseModelList(r.text);
+        if (!page) return { fail: u + " -> no model list in the answer", models: acc };
+        var all = acc.concat(page.models);
+        if (page.nextAfter && n < MAX_PAGES) return pages(url, headers, all, page.nextAfter, n + 1);
+        return { models: all };
+      });
+    }
+    function tryNext(i, h) {
       if (i >= candidates.length) {
         return { ok: false, error: "no model list found - tried " + candidates.join(", ") +
           (failures.length ? " (" + failures.join("; ") + ")" : "") + ". Add the models by hand." };
       }
       var url = candidates[i];
-      var ctl = new AbortController();
-      var timer = setTimeout(function () { ctl.abort(); }, 15000);
-      return fetch(url, { method: "GET", headers: headers, signal: ctl.signal }).then(function (res) {
-        return res.text().then(function (text) {
-          clearTimeout(timer);
-          if (!res.ok) { failures.push(url + " -> HTTP " + res.status); return tryNext(i + 1); }
-          var list = parseModelList(text);
-          if (!list || !list.length) { failures.push(url + " -> no model list in the answer"); return tryNext(i + 1); }
-          return { ok: true, source: url, models: list };
-        });
-      }, function (e) {
-        clearTimeout(timer);
-        failures.push(url + " -> " + (e && e.name === "AbortError" ? "no answer within 15 s" : (e && e.message ? e.message : String(e))));
-        return tryNext(i + 1);
+      return pages(url, headerSets[h], [], null, 0).then(function (r) {
+        if (r.fail && !r.models.length) {
+          failures.push(r.fail);
+          return h + 1 < headerSets.length ? tryNext(i, h + 1) : tryNext(i + 1, 0);
+        }
+        if (!r.models.length) { failures.push(url + " -> empty list"); return h + 1 < headerSets.length ? tryNext(i, h + 1) : tryNext(i + 1, 0); }
+        // Duplicates across pages (a gateway's alias rows) are dropped.
+        var seenId = Object.create(null);
+        var models = r.models.filter(function (m) { if (seenId[m.id]) return false; seenId[m.id] = true; return true; });
+        return { ok: true, source: url, models: models, partial: r.fail || null };
       });
     }
-    return tryNext(0);
+    return tryNext(0, 0);
   });
 
   // Which of the app's five effort levels a provider accepts for a model:

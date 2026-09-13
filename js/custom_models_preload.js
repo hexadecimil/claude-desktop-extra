@@ -286,7 +286,8 @@
     var isCount = /\/v1\/messages\/count_tokens$/.test(pathname);
     if (!isMessages && !isCount) return null;
     var maybeWebSearch = (!!webSearchRoute || !!webSearchAnthropic) && isMessages && init.body.indexOf('"web_search') !== -1;
-    if (!quickMatch(init.body) && !maybeWebSearch) return null;
+    var ours = quickMatch(init.body);
+    if (!ours && !maybeWebSearch) return isMessages ? foreignPreviousId(rawFetch, input, init) : null;
 
     var body = JSON.parse(init.body);
     var requested = String(body.model || "").replace(/\[\w+\]$/, "").trim();
@@ -371,6 +372,23 @@
       }
       return res;
     })();
+  }
+
+  // A request to Anthropic that follows a turn answered by a custom model:
+  // the CLI names the previous assistant message in
+  // diagnostics.previous_message_id, and Anthropic refuses an id it did not
+  // mint ("must be the id from a prior /v1/messages response, starts with
+  // msg_") - OpenRouter's are gen-..., DeepSeek's happen to pass. The field
+  // is diagnostic; null is what the CLI sends when it has none.
+  function foreignPreviousId(rawFetch, input, init) {
+    if (init.body.indexOf('"previous_message_id"') === -1) return null;
+    var body;
+    try { body = JSON.parse(init.body); } catch (e) { return null; }
+    var d = body && body.diagnostics;
+    if (!d || typeof d !== "object" || typeof d.previous_message_id !== "string" || /^msg_/.test(d.previous_message_id)) return null;
+    log("previous_message_id " + d.previous_message_id.slice(0, 24) + " is not Anthropic's -> sent as null (model " + body.model + ")");
+    d.previous_message_id = null;
+    return rawFetch(input, Object.assign({}, init, { body: JSON.stringify(body) }));
   }
 
   var rawFetch = globalThis.fetch;

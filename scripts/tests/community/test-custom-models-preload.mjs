@@ -224,6 +224,22 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
      "a normal Opus request is not rewritten");
 }
 
+// --- a foreign previous_message_id on the way to Anthropic ------------------------
+{
+  const { hooked, calls } = load(CONFIG);
+  const mk = (id) => ({ model: "claude-opus-5", max_tokens: 10, messages: [{ role: "user", content: "hi" }],
+    diagnostics: { previous_message_id: id }, metadata: { user_id: "u" } });
+  await hooked(ANTHROPIC, messagesInit(mk("gen-1234567890abcdef")));
+  let b = JSON.parse(calls[0].init.body);
+  ok(calls[0].url === ANTHROPIC && b.diagnostics.previous_message_id === null && b.metadata.user_id === "u" && b.model === "claude-opus-5",
+     "an id Anthropic did not mint (OpenRouter's gen-...) is sent as null, the rest untouched");
+  await hooked(ANTHROPIC, messagesInit(mk("msg_01ABCDEF")));
+  ok(calls[1].init.body === messagesInit(mk("msg_01ABCDEF")).body, "an Anthropic id passes through byte for byte");
+  await hooked(ANTHROPIC, messagesInit({ model: "claude-opus-5", max_tokens: 10, messages: [{ role: "user", content: "hi" }], diagnostics: { previous_message_id: null } }));
+  ok(calls[2].init.body.indexOf('"previous_message_id":null') !== -1 && calls[2].init.headers.authorization === "Bearer sk-ant-oauth-secret",
+     "null stays null and the original init (credentials) is kept");
+}
+
 // --- a provider 401: rewritten so the CLI does not chase its own OAuth token ---
 {
   const responses = [new Response(JSON.stringify({ error: { message: "Authentication Fails, Your api key is invalid" } }),

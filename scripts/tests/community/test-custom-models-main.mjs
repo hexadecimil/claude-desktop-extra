@@ -552,14 +552,30 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   ok(r.ok === true && r.models.length === 3 && r.models[0].id === "qwen/qwen3.8-max-0902" && r.models[0].name === "Qwen: Qwen3.8 Max" &&
      r.models[0].context === "1m" && r.models[1].context === "1m" && r.models[2].context === "200k",
      "an OpenRouter listing: name as display name, 1m from a context_length of 1M+, aliases with ~ dropped: " + JSON.stringify(r.models));
+  ok(!("anthropic-version" in sandbox.__fetchCalls[0].init.headers), "the first try carries no anthropic-version - it flips OpenRouter into its paginated Anthropic shape");
+  // The Anthropic Models API shape: 20 per page, has_more/last_id, ?after_id= - every page is fetched.
+  sandbox.__fetchCalls.length = 0;
+  sandbox.__fetchImpl = (url) => {
+    const after = /after_id=([^&]+)/.exec(url);
+    const page = after ? (after[1] === "b" ? 2 : 3) : 1;
+    const body = page === 1 ? { data: [{ id: "a" }, { id: "b" }], has_more: true, first_id: "a", last_id: "b" }
+      : page === 2 ? { data: [{ id: "c" }, { id: "b" }], has_more: true, first_id: "c", last_id: "d" }
+      : { data: [{ id: "e" }], has_more: false, first_id: "e", last_id: "e" };
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  };
+  r = await h["cdb-cm:models-list"](okSenderEv, "ds");
+  ok(r.ok === true && r.models.map((m) => m.id).join(",") === "a,b,c,e" && sandbox.__fetchCalls.length === 3 &&
+     /after_id=b$/.test(sandbox.__fetchCalls[1].url) && /after_id=d$/.test(sandbox.__fetchCalls[2].url),
+     "a paginated (has_more/last_id) listing is followed page by page, duplicates dropped: " + JSON.stringify(r.models.map((m) => m.id)) + " " + sandbox.__fetchCalls.map((c) => c.url).join(" "));
   sandbox.__fetchCalls.length = 0;
   sandbox.__fetchImpl = (url) => Promise.resolve(url === "https://api.deepseek.com/models"
     ? new Response(JSON.stringify({ data: [{ id: "m1", display_name: "Model One" }] }), { status: 200 })
     : new Response("nope", { status: 404 }));
   r = await h["cdb-cm:models-list"](okSenderEv, "ds");
   ok(r.ok === true && r.source === "https://api.deepseek.com/models" && r.models[0].name === "Model One" &&
-     sandbox.__fetchCalls.map((c) => c.url).join(" ") === "https://api.deepseek.com/v1/models https://api.deepseek.com/anthropic/v1/models https://api.deepseek.com/models",
-     "falls through the candidates in order and reads display_name: " + sandbox.__fetchCalls.map((c) => c.url).join(" "));
+     sandbox.__fetchCalls.map((c) => c.url).join(" ") === "https://api.deepseek.com/v1/models https://api.deepseek.com/v1/models https://api.deepseek.com/anthropic/v1/models https://api.deepseek.com/anthropic/v1/models https://api.deepseek.com/models" &&
+     !("anthropic-version" in sandbox.__fetchCalls[0].init.headers) && sandbox.__fetchCalls[1].init.headers["anthropic-version"] === "2023-06-01",
+     "falls through the candidates in order, each tried without then with anthropic-version and reads display_name: " + sandbox.__fetchCalls.map((c) => c.url).join(" "));
   sandbox.__fetchImpl = () => Promise.resolve(new Response("nope", { status: 404 }));
   r = await h["cdb-cm:models-list"](okSenderEv, "ds");
   ok(r.ok === false && /no model list found/.test(r.error) && /HTTP 404/.test(r.error), "every candidate failing is reported with the attempts");
