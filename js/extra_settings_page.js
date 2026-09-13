@@ -2342,15 +2342,29 @@
       var have = Object.create(null);
       p.models.forEach(function (m) { have[m.id] = true; });
       var boxes = [];
+      // A gateway lists hundreds: a filter narrows the checklist by id or name.
+      var filter = null;
+      if (r.models.length > 12) {
+        filter = input("text", "", "filter (e.g. qwen, glm)");
+        filter.className = "cdbx-input cdbx-models-filter";
+        box.appendChild(filter);
+      }
       r.models.forEach(function (m) {
         var lab = el("label", "cdbx-models-level");
         var cb = checkbox(!!have[m.id]);
         cb.disabled = !!have[m.id];
         cb.value = m.id;
         lab.appendChild(cb);
-        lab.appendChild(document.createTextNode(" " + m.id + (m.name && m.name !== m.id ? " (" + m.name + ")" : "") + (have[m.id] ? " - added" : "")));
+        lab.appendChild(document.createTextNode(" " + m.id + (m.name && m.name !== m.id ? " (" + m.name + ")" : "") +
+          (m.context === "1m" ? " - 1M" : "") + (have[m.id] ? " - added" : "")));
         box.appendChild(lab);
-        boxes.push({ cb: cb, m: m });
+        boxes.push({ cb: cb, m: m, lab: lab });
+      });
+      if (filter) filter.addEventListener("input", function () {
+        var q = filter.value.trim().toLowerCase();
+        boxes.forEach(function (b) {
+          b.lab.hidden = !!q && (b.m.id + " " + (b.m.name || "")).toLowerCase().indexOf(q) === -1;
+        });
       });
       var act = el("div", "cdbx-models-actions");
       var addSel = el("button", "cdbx-btn", "Add selected");
@@ -2362,7 +2376,9 @@
         var chain = Promise.resolve(null);
         picked.forEach(function (m) {
           chain = chain.then(function () {
-            return api.customModelsModelSet(p.id, { id: m.id, name: m.name && m.name !== m.id ? m.name : "" });
+            var payload = { id: m.id, name: m.name && m.name !== m.id ? m.name : "" };
+            if (m.context) payload.context = m.context; // the listing's context length, when it states one
+            return api.customModelsModelSet(p.id, payload);
           });
         });
         chain.then(function (last) {

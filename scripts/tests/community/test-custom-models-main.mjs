@@ -541,6 +541,17 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
      "models-list asks the preset's URL first and keeps only plain ids: " + JSON.stringify(r));
   ok(sandbox.__fetchCalls[0].init.method === "GET" && sandbox.__fetchCalls[0].init.headers.authorization === "Bearer sk-secret-1234567890" &&
      sandbox.__fetchCalls[0].init.headers["x-api-key"] === "sk-secret-1234567890", "with the key as Bearer and x-api-key");
+  // OpenRouter's shape: name is a display name, context_length settles the context mode.
+  sandbox.__fetchCalls.length = 0;
+  sandbox.__fetchImpl = () => Promise.resolve(new Response(JSON.stringify({ data: [
+    { id: "qwen/qwen3.8-max-0902", name: "Qwen: Qwen3.8 Max", context_length: 1000000 },
+    { id: "z-ai/glm-5.3", name: "Z.ai: GLM 5.3", context_length: 1310720 },
+    { id: "inference-net/small", name: "Small", context_length: 128000 },
+    { id: "~z-ai/glm-latest", name: "alias", context_length: 1310720 }] }), { status: 200 }));
+  r = await h["cdb-cm:models-list"](okSenderEv, "ds");
+  ok(r.ok === true && r.models.length === 3 && r.models[0].id === "qwen/qwen3.8-max-0902" && r.models[0].name === "Qwen: Qwen3.8 Max" &&
+     r.models[0].context === "1m" && r.models[1].context === "1m" && r.models[2].context === "200k",
+     "an OpenRouter listing: name as display name, 1m from a context_length of 1M+, aliases with ~ dropped: " + JSON.stringify(r.models));
   sandbox.__fetchCalls.length = 0;
   sandbox.__fetchImpl = (url) => Promise.resolve(url === "https://api.deepseek.com/models"
     ? new Response(JSON.stringify({ data: [{ id: "m1", display_name: "Model One" }] }), { status: 200 })

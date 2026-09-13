@@ -948,7 +948,12 @@
       keyHint: "from platform.minimax.io" },
     { id: "qwen", label: "Qwen (DashScope)", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic",
       modelsUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/models", keyHint: "sk-... from DashScope" },
-    { id: "gateway", label: "Anthropic-compatible gateway (LiteLLM, OpenRouter...)", baseUrl: "",
+    // OpenRouter: one key, hundreds of models (Qwen, GLM, DeepSeek, Kimi, the
+    // Claude models...), Anthropic-compatible /v1/messages, public /v1/models
+    // that carries each model's context length.
+    { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api",
+      modelsUrl: "https://openrouter.ai/api/v1/models", keyHint: "sk-or-... from openrouter.ai/keys" },
+    { id: "gateway", label: "Anthropic-compatible gateway (LiteLLM...)", baseUrl: "",
       keyHint: "the gateway's key" }
   ];
   function presetOf(id) {
@@ -1188,7 +1193,18 @@
     arr.forEach(function (m) {
       var id = isObj(m) ? (typeof m.id === "string" ? m.id : (typeof m.name === "string" ? m.name : "")) : (typeof m === "string" ? m : "");
       if (!id || !ID_RE.test(id)) return;
-      out.push({ id: id, name: isObj(m) && typeof m.display_name === "string" && m.display_name ? m.display_name : id });
+      // display_name (Anthropic shape) or name (OpenRouter: "Qwen: Qwen3.8 Max")
+      var name = id;
+      if (isObj(m)) {
+        if (typeof m.display_name === "string" && m.display_name.trim()) name = m.display_name.trim();
+        else if (typeof m.name === "string" && m.name.trim() && m.name !== id) name = m.name.trim();
+      }
+      var e = { id: id, name: name };
+      // A listing that states the context length (OpenRouter's does) settles
+      // the model's context mode: 1M when it serves at least that.
+      var cl = isObj(m) ? (typeof m.context_length === "number" ? m.context_length : (typeof m.context_window === "number" ? m.context_window : null)) : null;
+      if (cl !== null) e.context = cl >= 1000000 ? "1m" : "200k";
+      out.push(e);
     });
     return out;
   }

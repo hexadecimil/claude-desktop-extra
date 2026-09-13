@@ -879,7 +879,37 @@ async function modelsPanel(modelsItem) {
     await sleep(80);
     ok(window.__cmWrites.some((w) => /^model-set:deepseek:deepseek-v4-pro:/.test(w)),
        "Add selected creates the ticked model: " + JSON.stringify(window.__cmWrites));
+    ok(!fetched.querySelector(".cdbx-models-filter"), "a short list has no filter box");
   }
+  // A long listing (a gateway) gets a filter box; a stated 1M context is
+  // shown and travels with the added model.
+  window.__cmModelsList = { ok: true, source: "https://openrouter.ai/api/v1/models", models: Array.from({ length: 14 }, (_, i) => (
+    i === 0 ? { id: "qwen/qwen3.8-max-0902", name: "Qwen: Qwen3.8 Max", context: "1m" }
+    : i === 1 ? { id: "z-ai/glm-5.3", name: "Z.ai: GLM 5.3", context: "1m" }
+    : { id: "vendor/model-" + i, name: "Model " + i, context: "200k" })) };
+  window.__cmWrites = [];
+  fetchBtn.click();
+  await sleep(60);
+  const fetched2 = cardF.querySelector(".cdbx-models-fetched");
+  const filt = fetched2 && fetched2.querySelector(".cdbx-models-filter");
+  ok(!!filt, "a listing of more than 12 models gets a filter box");
+  if (filt) {
+    const labels = Array.from(fetched2.querySelectorAll(".cdbx-models-level"));
+    ok(labels.length === 14 && /qwen\/qwen3\.8-max-0902 \(Qwen: Qwen3\.8 Max\) - 1M/.test(labels[0].textContent) && !/1M/.test(labels[2].textContent),
+       "each entry shows id, name and 1M when the listing states it: " + labels[0].textContent);
+    filt.value = "glm";
+    filt.dispatchEvent(new Event("input", { bubbles: true }));
+    ok(labels.filter((l) => !l.hidden).length === 1 && /glm-5\.3/.test(labels.find((l) => !l.hidden).textContent), "the filter narrows the checklist by id or name");
+    filt.value = "";
+    filt.dispatchEvent(new Event("input", { bubbles: true }));
+    ok(labels.every((l) => !l.hidden), "an empty filter shows everything again");
+    labels[0].querySelector("input").checked = true;
+    Array.from(fetched2.querySelectorAll("button")).find((b) => b.textContent === "Add selected").click();
+    await sleep(80);
+    ok(window.__cmWrites.some((w) => w === "model-set:deepseek:qwen/qwen3.8-max-0902:Qwen: Qwen3.8 Max:undefined:undefined:undefined:undefined:1m"),
+       "a listed model is added with its name and the listing's context: " + JSON.stringify(window.__cmWrites));
+  }
+  window.__cmModelsList = null;
   }
 
   // Test and remove on the editable provider.
@@ -1919,7 +1949,7 @@ window.cdbExtra = {
   // state, which is what the panel redraws from.
   customModelsConfig: function () { return Promise.resolve(window.__cmConfig); },
   customModelsProviderSet: function (p) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-set:" + p.id + ":" + p.baseUrl + ":" + (p.apiKey ? "key" : "nokey") + ":" + p.preset + ":" + p.modelsUrl + ":" + (p.effort ? p.effort.join("/") : "-")]); return Promise.resolve(window.__cmConfig); },
-  customModelsModelsList: function (pid) { window.__cmWrites = (window.__cmWrites || []).concat(["list:" + pid]); return Promise.resolve({ ok: true, source: "https://api.deepseek.com/v1/models", models: [{ id: "deepseek-flash", name: "deepseek-flash" }, { id: "deepseek-v4-pro", name: "deepseek-v4-pro" }] }); },
+  customModelsModelsList: function (pid) { window.__cmWrites = (window.__cmWrites || []).concat(["list:" + pid]); return Promise.resolve(window.__cmModelsList || { ok: true, source: "https://api.deepseek.com/v1/models", models: [{ id: "deepseek-flash", name: "deepseek-flash" }, { id: "deepseek-v4-pro", name: "deepseek-v4-pro" }] }); },
   customModelsWebSearchSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["websearch-set:" + v]); return Promise.resolve(window.__cmConfig); },
   customModelsProviderDelete: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-delete:" + id]); return Promise.resolve(window.__cmConfig); },
   customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch + (m.context ? ":" + m.context : "")]); return Promise.resolve(window.__cmConfig); },
