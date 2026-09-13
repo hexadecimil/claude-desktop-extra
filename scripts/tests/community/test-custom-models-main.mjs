@@ -346,6 +346,13 @@ function bootstrap() {
   const before = statSync(routesPath).mtimeMs;
   api.syncRoutes();
   ok(statSync(routesPath).mtimeMs === before, "an unchanged configuration does not rewrite the file (no needless mtime bump)");
+  // A hand edit (the .jsonc, or secrets.json written by another tool) is
+  // watched: routes.json follows within the debounce.
+  await new Promise((r) => setTimeout(r, 30)); // the deferred install sets the watches
+  writeFileSync(join(dir, "claude-desktop-extra.jsonc"), PROVIDERS);
+  await new Promise((r) => setTimeout(r, 700));
+  ok(routes().providers.length === 1 && routes().providers[0].id === "deepseek" && routes().providers[0].apiKey === "sk-test-1234567890",
+     "a hand-written .jsonc provider reaches routes.json without the panel: " + JSON.stringify(routes().providers.map((p) => p.id)));
   rmSync(dir, { recursive: true, force: true });
 }
 

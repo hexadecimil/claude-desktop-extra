@@ -129,7 +129,7 @@ The target is Anthropic-**compatible**, not Anthropic, so the CLI's request is r
 
 Two different things change at two different times:
 
-- **Routing** (a key pasted or fixed, a model added or removed, a provider removed, the web-search target, the switch) is live: the app rewrites `custom-models/routes.json` at every change and every open session re-reads it on its next request. A wrong key corrected in the panel works on the very next message; `/model claude-<new id>` and a workflow naming a new model work without a restart.
+- **Routing** (a key pasted or fixed, a model added or removed, a provider removed, the web-search target, the switch) is live: the app rewrites `custom-models/routes.json` at every change - the panel's writes, and hand edits of the `.jsonc`/`.json` or of `secrets.json`, which are watched - and every open session re-reads it on its next request. A wrong key corrected in the panel works on the very next message; `/model claude-<new id>` and a workflow naming a new model work without a restart.
 - **The picker** is drawn from the page's bootstrap, so a new entry shows in the menu after the Code tab reloads - the **Reload the Code tab** button next to the switch does it (open sessions keep running).
 
 The one exception: a session opened before your very first provider existed was spawned without the preload (the feature contributes nothing to a session while nothing is configured), so it needs the app restarted once.

@@ -1410,11 +1410,34 @@
   globalThis.__cdbCustomModels = { cliEnv: cliEnv, enrichBootstrap: enrichBootstrap, readConfig: readConfig,
     selectionOutcome: selectionOutcome, rememberServerState: rememberServerState, listedIds: listedIds, syncRoutes: syncRoutes };
 
+  // The files edited by hand (the .jsonc, a key file's secrets.json) are not
+  // written through the panel: watch them so routes.json follows those
+  // edits too. One directory watch each, debounced; a watch that cannot be
+  // set (unusual filesystem) only costs the live update for hand edits.
+  function watchForRoutes() {
+    var dirs = [pathFor(""), pathFor(SUBDIR)];
+    var names = { "claude-desktop-extra.jsonc": true, "claude-desktop-extra.json": true, "secrets.json": true };
+    var timer = null;
+    dirs.forEach(function (d) {
+      if (!d) return;
+      try {
+        _fs.mkdirSync(d, { recursive: true });
+        var w = _fs.watch(d, { persistent: false }, function (_ev, name) {
+          if (!name || !names[String(name)]) return;
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(function () { timer = null; syncRoutes(); }, 300);
+        });
+        w.on("error", function () {});
+      } catch (e) { log("cannot watch " + d + " for hand edits (" + (e && e.message ? e.message : String(e)) + ")"); }
+    });
+  }
+
   setTimeout(function () {
     var c = readConfig();
     var n = 0;
     c.providers.forEach(function (p) { n += p.models.length; });
     if (c.configured || _fs.existsSync(routesPath() || "")) syncRoutes();
+    watchForRoutes();
     log("installed (main); " + (c.configured ? n + " model(s) from " + c.providers.length + " provider(s), " +
       (c.enabled ? "on" : "off") + " (source: " + c.source + "), surfaces " + c.surfaces.join(",")
       : "no customModels.providers configured - feature idle"));
