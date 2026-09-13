@@ -2560,7 +2560,9 @@
       var want = existing && existing.effortDefault ? existing.effortDefault : "xhigh";
       if (avail.indexOf(want) === -1) want = avail.indexOf("xhigh") !== -1 ? "xhigh" : avail[avail.length - 1];
       effort.value = want;
-      field(form, "Default effort", effort, "The level the picker preselects, among the provider's levels (" + avail.join(", ") + ").");
+      field(form, "Default effort", effort, "The level marked as the default in the picker's effort menu, among the provider's " +
+        "levels (" + avail.join(", ") + "). It applies when the model is picked and the session's current level is not one " +
+        "this model offers; a level it does offer is kept across the switch, the way the app does for its own models.");
       var vision = field(form, "Images", checkbox(existing ? existing.vision : true),
         "Off: images are replaced by a placeholder line before the request leaves.");
       var webSearch = field(form, "Web search tool", checkbox(existing ? existing.webSearch !== false : true),

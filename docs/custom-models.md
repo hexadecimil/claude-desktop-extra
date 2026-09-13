@@ -96,7 +96,10 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
                                       // CLI's own WebSearch tool stays: the model can still search, the
                                       // search itself runs where `webSearch` above says
           "effort": ["low", "max"],   // file-only override of the provider's levels for this model
-          "effortDefault": "max"      // the preselected one (default: xhigh when offered, else the highest)
+          "effortDefault": "max"      // the one marked as default in the picker's menu (default: xhigh when
+                                      // offered, else the highest). Applied when the model is picked and the
+                                      // session's current level is not one it offers; a level it does offer
+                                      // is kept across the switch, as the app does for its own models
         }
       ]
     }
