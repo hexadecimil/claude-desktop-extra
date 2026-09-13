@@ -96,7 +96,7 @@
   var webSearchRoute = null;
   var webSearchAnthropic = "";
   if (typeof cfg.webSearch === "string" && cfg.webSearch.trim()) {
-    var wsWant = cfg.webSearch.trim();
+    var wsWant = cfg.webSearch.trim().replace(/\[\w+\]$/, ""); // routes are keyed without [1m]
     webSearchRoute = routes.get(exposedId(wsWant)) || null;
     if (!webSearchRoute && /^claude-[a-z0-9][a-z0-9.-]{0,60}$/.test(wsWant)) webSearchAnthropic = wsWant;
   }

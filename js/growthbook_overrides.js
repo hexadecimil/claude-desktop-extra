@@ -136,7 +136,7 @@
     "  //     \"id\": \"deepseek\",",
     "  //     \"baseUrl\": \"https://api.deepseek.com/anthropic\",",
     "  //     \"apiKeyFile\": \"~/.config/deepseek.key\",",
-    "  //     \"models\": [{ \"id\": \"deepseek-flash\", \"name\": \"DeepSeek Flash\", \"context1m\": true }]",
+    "  //     \"models\": [{ \"id\": \"deepseek-flash\", \"name\": \"DeepSeek Flash\", \"context\": \"1m\" }]",
     "  //   }]",
     "  // },",
     "",

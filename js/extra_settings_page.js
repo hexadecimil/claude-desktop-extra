@@ -2264,11 +2264,11 @@
         var rm = el("div", "cdbx-row-main");
         rm.appendChild(el("div", "cdbx-id", m.name + (m.name !== m.id ? "  (" + m.id + ")" : "")));
         var traits = [];
-        traits.push("in the picker as " + m.alias);
+        traits.push("in the picker as " + (Array.isArray(m.listedAs) && m.listedAs.length ? m.listedAs.join(" and ") : m.alias));
+        traits.push(m.context === "1m" ? "1M context" : m.context === "both" ? "200k and a 1M twin" : "200k context");
         traits.push(m.thinking ? "default effort " + m.effortDefault : "no thinking");
         traits.push(m.vision ? "images" : "no images");
         traits.push(m.webSearch === false ? "no web search tool" : "web search tool");
-        if (m.context1m) traits.push("1M twin");
         if (m.badge) traits.push("badge \"" + m.badge + "\"");
         rm.appendChild(el("div", "cdbx-note", traits.join(" - ")));
         row.appendChild(rm);
@@ -2550,8 +2550,25 @@
       var webSearch = field(form, "Web search tool", checkbox(existing ? existing.webSearch !== false : true),
         "Whether the provider runs the web_search tool for this model (DeepSeek's /anthropic API does). " +
         "Off: the tool is stripped from its requests and it is not offered as the web-search model.");
-      var context1m = field(form, "1M twin", checkbox(existing ? existing.context1m : false),
-        "Also list a \"<name> 1M\" entry, the way Sonnet/Opus 1M are listed. Pointless for a model whose context is 1M natively.");
+      // The CLI trusts only the id for a model's context window: 200k for
+      // anything it does not know, 1M when the id ends in [1m]. The window
+      // drives the context gauge and auto-compaction.
+      var inheritedContext = p.context === "1m" || p.context === "both" ? p.context : "200k";
+      var context = el("select", "cdbx-select");
+      [["200k", "200k - listed as claude-<id>"],
+       ["1m", "1M - listed as claude-<id>[1m], under its plain name"],
+       ["both", "both - two entries, \"<name>\" and \"<name> 1M\", like Sonnet and Opus"]].forEach(function (c) {
+        var o = el("option", "", c[1]);
+        o.value = c[0];
+        context.appendChild(o);
+      });
+      context.value = existing && existing.context ? existing.context : inheritedContext;
+      field(form, "Context window", context,
+        "What Claude Code believes the model's window is - it reads only the id: 200k for a model it does not " +
+        "know, 1M when the id ends in [1m]. It sets the context gauge and when the session auto-compacts, so a " +
+        "natively-1M model left on 200k is compacted at 200k. \"both\" is for a provider that prices the two windows " +
+        "differently. The provider receives the bare id either way." +
+        (p.preset ? " Preset default: " + inheritedContext + "." : ""));
       var badge = field(form, "Badge", input("text", existing ? existing.badge : "", "optional, e.g. beta"),
         "Optional neutral badge next to the name.");
       var actions = el("div", "cdbx-models-actions");
@@ -2561,7 +2578,7 @@
         save.disabled = true;
         var payload = { id: id.value, name: name.value, description: desc.value, badge: badge.value,
           thinking: thinking.checked, vision: vision.checked, webSearch: webSearch.checked,
-          context1m: context1m.checked, effortDefault: effort.value };
+          context: context.value, effortDefault: effort.value };
         call("customModelsModelSet", p.id, payload).then(function (okd) {
           if (!okd) save.disabled = false;
           else toast(existing ? "Model " + existing.id + " saved" : "Model " + payload.id.trim() + " added to " + p.id);

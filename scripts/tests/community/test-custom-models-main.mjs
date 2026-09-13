@@ -94,9 +94,15 @@ function bootstrap() {
         { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5", short_name: "Haiku", section: "main", thinking: { type: "none" }, quick_select: true },
         { id: "claude-opus-4-8", name: "Opus 4.8", short_name: "Opus", section: "overflow", thinking: OPUS_THINKING }
       ] },
+      // The logical Code surface: what the session logic reads (effort
+      // options, available ids) and what the page persists state for.
+      { id: "code", models: [
+        { id: "claude-opus-5", name: "Opus 5", section: "main", thinking: OPUS_THINKING },
+        { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5", section: "main", thinking: { type: "none" } }
+      ] },
       { id: "chat", models: [{ id: "claude-opus-5", name: "Opus 5" }] }
     ],
-    model_selector_state: [{ id: "ccd", model: "claude-opus-5" }]
+    model_selector_state: [{ id: "ccd", model: "claude-opus-5" }, { id: "code", model: "claude-opus-5" }]
   };
 }
 
@@ -128,7 +134,7 @@ function bootstrap() {
      "providers with no enabled flag: on by default");
   ok(r.models === 2 && r.providers.length === 1 && r.providers[0].id === "deepseek" && r.providers[0].keyOk === true,
      "the summary counts 2 models from provider deepseek with a key");
-  ok(JSON.stringify(r.surfaces) === '["ccd"]', "surfaces default to ccd (the desktop Code tab) only");
+  ok(JSON.stringify(r.surfaces) === '["ccd","code"]', "surfaces default to ccd and code - the two the desktop Code tab reads");
 
   const cfg = api.readConfig();
   ok(cfg.providers[0].baseUrl === "https://api.deepseek.com/anthropic", "baseUrl loses its trailing slash");
@@ -148,7 +154,7 @@ function bootstrap() {
   const back = await h["cdb-cm:pref-set"](okSenderEv, true);
   ok(back.ok === true && back.enabled === true, "pref-set(true) turns it back on");
   await new Promise((r) => setTimeout(r, 5));
-  ok(diag.some((l) => /\[custom-models\] installed \(main\); 2 model\(s\) from 1 provider\(s\), on \(source: json\), surfaces ccd/.test(l)),
+  ok(diag.some((l) => /\[custom-models\] installed \(main\); 2 model\(s\) from 1 provider\(s\), on \(source: json\), surfaces ccd,code/.test(l)),
      "the deferred install line goes through __cdbDiag: " + diag.filter((l) => /installed/.test(l)).join(" | "));
   rmSync(dir, { recursive: true, force: true });
 }
@@ -205,9 +211,14 @@ function bootstrap() {
   const out = api.enrichBootstrap(boot, cfg);
   ok(out === boot, "enrichBootstrap returns the same object, patched in place");
   const ccd = out.model_selector_config.find((s) => s.id === "ccd").models;
+  const code = out.model_selector_config.find((s) => s.id === "code").models;
   const cowork = out.model_selector_config.find((s) => s.id === "cowork").models;
   ok(cowork.length === 1, "surfaces not configured (cowork) are untouched");
   ok(ccd.length === 6, "ccd gets 3 entries: flash, flash[1m], pro (" + ccd.length + ")");
+  ok(code.length === 5 && code.slice(2).map((e) => e.id).join(",") === "claude-deepseek-flash,claude-deepseek-flash[1m],claude-deepseek-pro",
+     "the code surface - the one the effort menu and the available ids are read from - gets the same entries");
+  ok(code[2].thinking.effort_options.length === 5 && code[2].thinking.effort_options[2].name === "Élevé",
+     "with the effort menu borrowed from that surface's own Opus entry");
   ok(ccd[0].id === "claude-opus-5" && ccd[2].id === "claude-opus-4-8", "Anthropic's entries stay first and unchanged");
   const flash = ccd[3], flash1m = ccd[4], pro = ccd[5];
   ok(flash.id === "claude-deepseek-flash" && flash.name === "DeepSeek Flash" && flash.short_name === "DeepSeek Flash" &&
@@ -234,7 +245,20 @@ function bootstrap() {
      "max keeps the surface's tooltip");
   ok(!("mode_options" in flash.thinking), "no mode options on a surface whose menu has none (ccd)");
   ok(flash1m.id === "claude-deepseek-flash[1m]" && flash1m.supports_1m_context === true &&
-     flash1m.description === "1M context window", "context1m adds the [1m] variant in upstream's 3p shape");
+     flash1m.description === "1M context window", "context1m:true (first-release spelling) = both: adds the [1m] twin in upstream's 3p shape");
+  ok(cfg.providers[0].models[0].context === "both" && cfg.providers[0].models[1].context === "200k" &&
+     cfg.providers[0].context === "200k", "context: both from context1m, 200k when nothing says otherwise");
+  // "1m": the model is listed under its [1m] spelling only - the only id the
+  // CLI reads as a 1M window - and under its plain name.
+  const one = JSON.parse(JSON.stringify(cfg));
+  one.providers[0].models[0].context = "1m";
+  const c1 = api.enrichBootstrap(bootstrap(), one).model_selector_config.find((s) => s.id === "ccd").models;
+  ok(c1.length === 5 && c1[3].id === "claude-deepseek-flash[1m]" && c1[3].name === "DeepSeek Flash" &&
+     !("supports_1m_context" in c1[3]) && c1[3].description === "V4.1 Flash" && c1[4].id === "claude-deepseek-pro",
+     "context 1m: one entry, claude-<id>[1m], plain name, no 1M suffix flag: " + c1.map((e) => e.id).join(","));
+  ok(JSON.stringify(api.listedIds(one.providers[0].models[0])) === '["claude-deepseek-flash[1m]"]' &&
+     JSON.stringify(api.listedIds(cfg.providers[0].models[0])) === '["claude-deepseek-flash","claude-deepseek-flash[1m]"]' &&
+     JSON.stringify(api.listedIds(cfg.providers[0].models[1])) === '["claude-deepseek-pro"]', "listedIds follows the context mode");
   ok(pro.id === "claude-deepseek-pro" && pro.thinking.type === "none" && pro.capabilities.mm_images === false &&
      pro.badge && pro.badge.message === "slow", "thinking:false is type none; vision:false drops images; badge is neutral");
   ok(JSON.stringify(out.model_selector_state) === JSON.stringify(bootstrap().model_selector_state) &&
@@ -430,12 +454,23 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   ok(!/sk-secret/.test(JSON.stringify(r)), "no key value in the config-read answer");
 
   r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", name: "DeepSeek Flash", description: "", badge: "",
-    thinking: true, vision: true, context1m: false, effortDefault: "xhigh" });
+    thinking: true, vision: true, context: "1m", effortDefault: "xhigh" });
   ok(r.ok === true && r.configured === true && r.providers[0].models.length === 1 && r.providers[0].models[0].alias === "claude-deepseek-flash",
      "model-set adds the model and the provider becomes usable");
   const j2 = JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8"));
   ok(JSON.stringify(j2.customModels.providers[0].models[0]) === JSON.stringify({ id: "deepseek-flash", name: "DeepSeek Flash" }),
-     "defaults (thinking, vision, xhigh) are not written out: " + JSON.stringify(j2.customModels.providers[0].models[0]));
+     "defaults (thinking, vision, xhigh, the preset's 1M context) are not written out: " + JSON.stringify(j2.customModels.providers[0].models[0]));
+  // The DeepSeek preset knows its models are 1M: inherited, listed as [1m].
+  ok(r.providers[0].context === "1m" && r.providers[0].models[0].context === "1m" &&
+     JSON.stringify(r.providers[0].models[0].listedAs) === '["claude-deepseek-flash[1m]"]',
+     "the model inherits the preset's 1M context and is listed as claude-deepseek-flash[1m]");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", name: "DeepSeek Flash", context: "200k", effortDefault: "xhigh" });
+  ok(r.ok === true && r.providers[0].models[0].context === "200k" &&
+     JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[0].context === "200k",
+     "a context that differs from the provider's is written");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", name: "DeepSeek Flash", context: "1m", effortDefault: "xhigh" });
+  ok(r.ok === true && !("context" in JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[0]),
+     "back to the provider's value, the key is dropped again");
   // Effort levels live on the provider: the preset gave low/high/max, the
   // model inherits them and its default is the highest.
   ok(r.providers[0].effort.join(",") === "low,high,max" && r.providers[0].models[0].effort.join(",") === "low,high,max" &&
@@ -622,6 +657,24 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   ok(out.choices && !("code" in out.choices) && out.reply === null, "an accepted PATCH drops the memory for that surface");
   out = api.selectionOutcome("code", "PATCH", JSON.stringify({ model: "claude-opus-5" }), 200, cfg, {});
   ok(out.choices === null, "and changes nothing when there was none");
+  // The page also PATCHes {thinking} alone (the effort menu) and {fast_mode}:
+  // the server applies those to the model IT holds (Opus) and answers 200 -
+  // that must not forget our model, and the thinking asked for is ours.
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ thinking: { type: "effort", effort: "low" } }), 200, cfg,
+    { code: { model: "claude-deepseek-flash", thinking: { type: "effort", effort: "max" } } });
+  ok(out.choices && out.choices.code.model === "claude-deepseek-flash" && out.choices.code.thinking.effort === "low",
+     "an accepted PATCH without a model keeps the memory and takes the new thinking");
+  ok(out.reply && out.reply.model === "claude-deepseek-flash" && out.reply.thinking.effort === "low" &&
+     out.reply.thinking_by_model.some((e) => e.id === "claude-deepseek-flash" && e.thinking.effort === "low"),
+     "and the page is answered with our state, not the server's");
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ fast_mode: "off" }), 200, cfg, { code: { model: "claude-deepseek-flash", thinking: { type: "effort", effort: "max" } } });
+  ok(out.choices && out.choices.code.thinking.effort === "max" && out.reply && out.reply.model === "claude-deepseek-flash",
+     "a fast_mode write keeps the remembered thinking");
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ thinking: { type: "effort", effort: "low" } }), 200, cfg, {});
+  ok(out.choices === null && out.reply === null, "with no memory a model-less write is the server's business");
+  out = api.selectionOutcome("code", "PATCH", JSON.stringify({ model: "claude-deepseek-flash[1m]" }), REFUSED, cfg, {});
+  ok(out.choices && out.choices.code.model === "claude-deepseek-flash[1m]" && out.reply.model === "claude-deepseek-flash[1m]",
+     "the [1m] spelling is one of ours too");
   out = api.selectionOutcome("code", "GET", "", 200, cfg, {});
   ok(out.choices === null && out.reply === null, "only PATCH is looked at");
   out = api.selectionOutcome("code", "PATCH", "not json", REFUSED, cfg, {});

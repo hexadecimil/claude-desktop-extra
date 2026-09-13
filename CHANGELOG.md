@@ -26,6 +26,11 @@ login and every Claude model stay as they are, unlike the exclusive 3P mode.
   preload that forwards only our models to the provider (Anthropic-compatible subset of the Messages API,
   effort mapped, thinking budget clamped, mid-conversation system messages folded). The key travels in the
   session's environment and is scrubbed from it before the CLI's code runs; nothing the session spawns sees it.
+- The desktop Code tab reads two bootstrap surfaces, `ccd` for the menu and `code` for the session's state
+  (effort options, the ids reported as available, the persisted choice); both are enriched, so the effort
+  menu works for a custom model and `set_session_model` accepts it. A per-model context window (`200k`,
+  `1m`, `both`) decides the id spelling, since the CLI reads only the `[1m]` suffix for a 1M window - the
+  DeepSeek preset sets `1m`. The remembered choice survives the page's thinking/fast-mode writes.
 - Docs: `docs/custom-models.md`. Tests: `test-custom-models-main.mjs`, `test-custom-models-preload.mjs`.
 
 ## 2026-09-10 (later)

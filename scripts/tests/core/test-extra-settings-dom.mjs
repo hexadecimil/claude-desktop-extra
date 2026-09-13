@@ -723,17 +723,17 @@ async function featuresPanel(featuresItem) {
 // observable DOM or a recorded bridge call.
 async function modelsPanel(modelsItem) {
   window.__cmConfig = { ok: true, enabled: true, configured: true, lockedByJsonc: false, source: "default",
-    surfaces: ["ccd"], models: 2, webSearch: "claude-deepseek-flash", webSearchLocked: false,
+    surfaces: ["ccd", "code"], models: 2, webSearch: "claude-deepseek-flash", webSearchLocked: false,
     anthropicModels: [{ id: "claude-opus-5", name: "Opus 5" }, { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }],
     presets: [{ id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", keyHint: "sk-...",
-      modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"] }],
+      modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m" }],
     paths: { json: "/home/u/.config/Claude/claude-desktop-extra.json", jsonc: "/home/u/.config/Claude/claude-desktop-extra.jsonc",
       secrets: "/home/u/.config/Claude/custom-models/secrets.json" },
     providers: [
-      { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored", preset: "deepseek", modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"],
-        models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", name: "DeepSeek Flash", description: "", vision: true, thinking: true, context1m: false, effort: ["low", "high", "max"], effortDefault: "max", badge: "" }] },
-      { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none", effort: ["low", "medium", "high", "xhigh", "max"],
-        models: [{ id: "gw-model", alias: "claude-gw-model", name: "gw-model", description: "", vision: false, thinking: false, webSearch: false, context1m: false, effortDefault: "", badge: "" }] }
+      { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored", preset: "deepseek", modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m",
+        models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", listedAs: ["claude-deepseek-flash[1m]"], name: "DeepSeek Flash", description: "", vision: true, thinking: true, context: "1m", effort: ["low", "high", "max"], effortDefault: "max", badge: "" }] },
+      { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none", effort: ["low", "medium", "high", "xhigh", "max"], context: "200k",
+        models: [{ id: "gw-model", alias: "claude-gw-model", listedAs: ["claude-gw-model"], name: "gw-model", description: "", vision: false, thinking: false, webSearch: false, context: "200k", effortDefault: "", badge: "" }] }
     ] };
   window.__cmWrites = [];
   modelsItem.click();
@@ -765,8 +765,10 @@ async function modelsPanel(modelsItem) {
   ok(!cards[1].querySelector(".cdbx-models-add") && !Array.from(cards[1].querySelectorAll("button")).some((b) => b.textContent === "remove"),
      "a locked provider offers neither Add a model nor remove");
   const row = cards[0].querySelector(".cdbx-models-list .cdbx-row");
-  ok(!!row && /in the picker as claude-deepseek-flash/.test(row.querySelector(".cdbx-note").textContent) &&
-     /default effort max/.test(row.querySelector(".cdbx-note").textContent), "the model row states its alias and default effort: " + row.querySelector(".cdbx-note").textContent);
+  ok(!!row && /in the picker as claude-deepseek-flash\[1m\] - 1M context/.test(row.querySelector(".cdbx-note").textContent) &&
+     /default effort max/.test(row.querySelector(".cdbx-note").textContent), "the model row states the id it is listed under, its context and default effort: " + row.querySelector(".cdbx-note").textContent);
+  ok(/in the picker as claude-gw-model - 200k context/.test(cards[1].querySelector(".cdbx-models-list .cdbx-row .cdbx-note").textContent),
+     "a 200k model says so");
   ok(/effort levels low\/high\/max/.test(cards[0].querySelector(".cdbx-state").textContent), "the provider card states its effort levels");
 
   // Add a model: the form's fields reach the bridge as typed.
@@ -779,17 +781,24 @@ async function modelsPanel(modelsItem) {
     inputs[0].value = "deepseek-pro";
     inputs[1].value = "DeepSeek Pro";
     ok(!form.querySelector(".cdbx-models-level"), "a model form has no effort-level boxes - they belong to the provider");
-    const effortSel = form.querySelector("select");
+    const selects = form.querySelectorAll("select");
+    const effortSel = selects[0], contextSel = selects[1];
     ok(Array.from(effortSel.options).map((o) => o.value).join(",") === "low,high,max" && effortSel.value === "max",
        "the default select lists the provider's levels, the highest preselected: " + effortSel.value);
     effortSel.value = "high";
+    ok(!!contextSel && Array.from(contextSel.options).map((o) => o.value).join(",") === "200k,1m,both" && contextSel.value === "1m",
+       "the context select offers 200k / 1M / both, the provider's (preset) value preselected: " + (contextSel && contextSel.value));
+    const ctxNote = contextSel.closest(".cdbx-models-field").querySelector(".cdbx-note");
+    ok(!!ctxNote && /reads only the id/.test(ctxNote.textContent) && /\[1m\]/.test(ctxNote.textContent) && /Preset default: 1m/.test(ctxNote.textContent),
+       "the context help explains the CLI reads the id, the [1m] spelling and the preset default");
+    contextSel.value = "both";
     const boxes = form.querySelectorAll(".cdbx-models-field > .cdbx-row-aside > input[type=checkbox]");
     boxes[1].checked = false; // images off
     boxes[2].checked = false; // web search tool off
     Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Add model").click();
     await sleep(60);
-    ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high:false") >= 0,
-       "Add model sends provider id, model id, name, thinking, images, effort default and web search: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high:false:both") >= 0,
+       "Add model sends provider id, model id, name, thinking, images, effort default, web search and context: " + JSON.stringify(window.__cmWrites));
   }
 
   // Add a provider: a button opens the form; the preset prefills, the key
@@ -1913,7 +1922,7 @@ window.cdbExtra = {
   customModelsModelsList: function (pid) { window.__cmWrites = (window.__cmWrites || []).concat(["list:" + pid]); return Promise.resolve({ ok: true, source: "https://api.deepseek.com/v1/models", models: [{ id: "deepseek-flash", name: "deepseek-flash" }, { id: "deepseek-v4-pro", name: "deepseek-v4-pro" }] }); },
   customModelsWebSearchSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["websearch-set:" + v]); return Promise.resolve(window.__cmConfig); },
   customModelsProviderDelete: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-delete:" + id]); return Promise.resolve(window.__cmConfig); },
-  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch + (m.context ? ":" + m.context : "")]); return Promise.resolve(window.__cmConfig); },
   customModelsModelDelete: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["model-delete:" + pid + ":" + mid]); return Promise.resolve(window.__cmConfig); },
   customModelsTest: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["test:" + id]); return Promise.resolve({ ok: true, status: 200, model: "deepseek-flash" }); },
   customModelsEffortProbe: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["probe:" + pid + ":" + mid]); return Promise.resolve({ ok: true, accepted: ["low", "max"], rejected: { medium: "x", high: "x", xhigh: "x" } }); },

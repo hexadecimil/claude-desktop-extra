@@ -199,6 +199,13 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
   await h2(ANTHROPIC, messagesInit({ model: "claude-haiku-4-5", max_tokens: 100, messages: [{ role: "user", content: "s" }],
     tools: [{ type: "web_search_20250305", name: "web_search" }] }));
   ok(JSON.parse(c2[0].init.body).model === "deepseek-pro", "the per-provider webSearch is the fallback");
+  // The target may be spelled with the [1m] suffix (a model listed as 1M).
+  const oneM = JSON.parse(JSON.stringify(CONFIG)); oneM.webSearch = "claude-deepseek-flash[1m]";
+  const { hooked: h1m, calls: c1m } = load(oneM);
+  await h1m(ANTHROPIC, messagesInit({ model: "claude-haiku-4-5", max_tokens: 100, messages: [{ role: "user", content: "s" }],
+    tools: [{ type: "web_search_20250305", name: "web_search" }] }));
+  ok(c1m[0].url.startsWith("https://api.deepseek.com/") && JSON.parse(c1m[0].init.body).model === "deepseek-flash",
+     "a webSearch target spelled with [1m] finds its route");
   const none = JSON.parse(JSON.stringify(CONFIG)); delete none.webSearch;
   const { hooked: h3, calls: c3 } = load(none);
   await h3(ANTHROPIC, messagesInit({ model: "claude-haiku-4-5", max_tokens: 100, messages: [{ role: "user", content: "s" }],

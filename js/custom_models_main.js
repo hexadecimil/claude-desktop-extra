@@ -17,11 +17,12 @@
  *     that menu - modelPicker in ~/.claude/settings.json only reaches the CLI's
  *     own /model. So we attach the Chrome DevTools Protocol `Fetch` domain to
  *     claude.ai webContents, pause the bootstrap RESPONSE, and append our
- *     entries to the surfaces we are configured for (default: ccd, the
- *     desktop Code tab). The entries copy the shape the live bootstrap carries
- *     for that surface (see the picker-entries section), so the page renders
- *     them like any other model. Anthropic's list stays whatever the server
- *     sent - new Claude models keep appearing.
+ *     entries to the surfaces we are configured for (default: ccd and code,
+ *     the two the desktop Code tab reads - see DEFAULT_SURFACES). The entries
+ *     copy the shape the live bootstrap carries for that surface (see the
+ *     picker-entries section), so the page renders them like any other
+ *     model. Anthropic's list stays whatever the server sent - new Claude
+ *     models keep appearing.
  *
  *  2. ROUTING. `cliEnv()` is spliced into the environment of every Code-tab
  *     session the app spawns (sub-patch B of the Nim patch): BUN_OPTIONS
@@ -60,10 +61,28 @@
   var PRELOAD_NAME = "preload.js";
   var LOG_NAME = "custom-models.log";
   var SECRETS_NAME = "secrets.json";
-  // Picker surfaces as the bootstrap names them: ccd is the desktop Code tab,
-  // ccr Claude Code on the web, then chat/cowork/design/... Default ccd only:
-  // a Cowork session runs in a VM and cannot reach the preload.
-  var DEFAULT_SURFACES = ["ccd"];
+  // Picker surfaces as the bootstrap names them. The desktop Code tab reads
+  // TWO of them: `ccd` is the catalogue the picker menu is drawn from, `code`
+  // is the surface the session logic runs on - the model's effort options
+  // (the effort menu is hidden for a model `code` does not list), the ids
+  // reported to the app as available (setAvailableCodeModels, hence what the
+  // set_session_model MCP tool accepts) and the state the page persists
+  // (PATCH model_selector_state/code). Both are needed. `ccr` is Claude Code
+  // on the web, then chat/cowork/design/... - a Cowork session runs in a VM
+  // and cannot reach the preload, so those are not listed by default.
+  var DEFAULT_SURFACES = ["ccd", "code"];
+  // How a model is exposed to the CLI, which trusts only the id for its
+  // context window: anything it does not know is 200k, unless the id ends in
+  // "[1m]" (the spelling it uses for Sonnet/Opus 1M) - then 1M. The window
+  // drives the context gauge and auto-compaction, so a natively-1M model
+  // listed under its bare id is compacted at 200k.
+  //   "200k": listed as claude-<id>
+  //   "1m":   listed as claude-<id>[1m] only, under its plain name
+  //   "both": claude-<id> and claude-<id>[1m] ("<name> 1M"), the way Sonnet
+  //           and Opus 1M are offered - for a provider that prices the two
+  //           windows differently
+  var CONTEXT_MODES = ["200k", "1m", "both"];
+  var DEFAULT_CONTEXT = "200k";
   var SURFACE_RE = /^[a-z][a-z0-9_]{0,40}$/;
   var ID_PREFIX = "claude-";
   var ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,120}$/;
@@ -111,15 +130,15 @@
   // ---- config ---------------------------------------------------------------
   // customModels: {
   //   enabled?: boolean,            // the switch; absent = on when a model is configured
-  //   surfaces?: ["ccd"],           // which pickers list them (bootstrap surface ids)
+  //   surfaces?: ["ccd", "code"],   // which pickers list them (bootstrap surface ids)
   //   webSearch?: "deepseek-flash", // app-wide: the CLI's web-search sub-request goes to
   //                                 // this model instead of Anthropic's small default - a
   //                                 // custom model, or any Anthropic id (claude-opus-5...)
   //   providers: [{
   //     id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic",
-  //     apiKey | apiKeyEnv | apiKeyFile, headers?, effortMap?,
+  //     apiKey | apiKeyEnv | apiKeyFile, headers?, effortMap?, context?,
   //     models: [{ id, name?, shortName?, description?, badge?, section?,
-  //                context1m?, vision?, thinking?, webSearch?, effort?, effortDefault? }]
+  //                context?, vision?, thinking?, webSearch?, effort?, effortDefault? }]
   //   }]
   // }
   // Two sources, merged: the hand-owned .jsonc and the .json the Settings
@@ -199,7 +218,6 @@
       shortName: typeof raw.shortName === "string" && raw.shortName.trim() ? raw.shortName.trim() : "",
       badge: typeof raw.badge === "string" && raw.badge.trim() ? raw.badge.trim() : "",
       section: raw.section === "overflow" ? "overflow" : "main",
-      context1m: raw.context1m === true,
       vision: raw.vision !== false,
       thinking: raw.thinking !== false,
       webSearch: raw.webSearch !== false
@@ -211,7 +229,18 @@
     if (typeof raw.effortDefault === "string" && EFFORT_ORDER.indexOf(raw.effortDefault) !== -1) {
       m.effortDefault = raw.effortDefault;
     }
+    // Unset here = the provider's (see normaliseProvider). `context1m: true`
+    // is the spelling of the first release, kept as "both".
+    if (CONTEXT_MODES.indexOf(raw.context) !== -1) m.context = raw.context;
+    else if (raw.context1m === true) m.context = "both";
     return m;
+  }
+  // The ids a model is listed under, per its context mode - what the picker
+  // shows, what the page persists, what the CLI receives as --model.
+  function listedIds(m) {
+    if (m.context === "1m") return [m.alias + "[1m]"];
+    if (m.context === "both") return [m.alias, m.alias + "[1m]"];
+    return [m.alias];
   }
 
   function normaliseProvider(raw, idx, locked, secrets) {
@@ -236,6 +265,12 @@
     }
     if (!levels && p.preset && presetOf(p.preset) && presetOf(p.preset).effort) levels = presetOf(p.preset).effort.slice();
     p.effort = levels || EFFORT_ORDER.slice();
+    // The context window its models are exposed with (CONTEXT_MODES): the
+    // file's value, else the preset's knowledge, else 200k - the CLI's own
+    // assumption for a model it does not know.
+    if (CONTEXT_MODES.indexOf(raw.context) !== -1) p.context = raw.context;
+    else if (p.preset && presetOf(p.preset) && presetOf(p.preset).context) p.context = presetOf(p.preset).context;
+    else p.context = DEFAULT_CONTEXT;
     if (typeof raw.modelsUrl === "string" && /^https?:\/\/[^\s]+$/.test(raw.modelsUrl.trim())) p.modelsUrl = raw.modelsUrl.trim();
     if (isObj(raw.headers)) p.headers = raw.headers;
     if (isObj(raw.effortMap)) p.effortMap = raw.effortMap;
@@ -244,6 +279,7 @@
       var n = normaliseModel(m, id, i);
       if (!n) return;
       if (!n.effort) n.effort = p.effort.slice();
+      if (!n.context) n.context = p.context;
       p.models.push(n);
     });
     return p;
@@ -450,7 +486,10 @@
     };
     if (m.section === "main") base.quick_select = true;
     if (m.badge) base.badge = { message: m.badge, variant: "neutral" };
-    if (!m.context1m) return [base];
+    // "1m": the [1m] spelling is the only one listed, under the plain name -
+    // no supports_1m_context, which is what makes the page append " 1M".
+    if (m.context === "1m") return [Object.assign({}, base, { id: m.alias + "[1m]" })];
+    if (m.context !== "both") return [base];
     return [base, Object.assign({}, base, { id: m.alias + "[1m]", description: "1M context window", supports_1m_context: true })];
   }
 
@@ -461,11 +500,7 @@
     if (!isObj(boot) || !Array.isArray(boot.model_selector_config)) return null;
     if (!cfg || !cfg.providers.length) return null;
     var changed = false;
-    var aliases = Object.create(null);
-    cfg.providers.forEach(function (p) { p.models.forEach(function (m) {
-      aliases[m.alias] = m;
-      if (m.context1m) aliases[m.alias + "[1m]"] = m;
-    }); });
+    var aliases = listedAliases(cfg);
     boot.model_selector_config.forEach(function (surface) {
       if (!isObj(surface) || cfg.surfaces.indexOf(surface.id) === -1) return;
       if (!Array.isArray(surface.models)) surface.models = [];
@@ -580,31 +615,54 @@
   // Returns { choices: <new store or null when unchanged>, reply: <body or null> }.
   function selectionOutcome(surface, method, reqBody, status, cfg, choices) {
     if (method !== "PATCH" || !surface) return { choices: null, reply: null };
-    var aliases = Object.create(null);
-    cfg.providers.forEach(function (p) { p.models.forEach(function (m) {
-      aliases[m.alias] = m;
-      if (m.context1m) aliases[m.alias + "[1m]"] = m;
-    }); });
+    var aliases = listedAliases(cfg);
     var req = null;
     try { req = JSON.parse(reqBody || ""); } catch (e) {}
-    var ours = isObj(req) && typeof req.model === "string" && !!aliases[req.model];
+    if (!isObj(req)) return { choices: null, reply: null };
+    var carriesModel = typeof req.model === "string";
+    var ours = carriesModel && !!aliases[req.model];
     var next = Object.assign(Object.create(null), choices);
+    var remembered = next[surface] && aliases[next[surface].model] ? next[surface] : null;
     if (status >= 200 && status < 300) {
-      // The server took it: an Anthropic model, its state is authoritative.
-      if (next[surface]) { delete next[surface]; return { choices: next, reply: null }; }
-      return { choices: null, reply: null };
+      // The server took it. A model it knows (an Anthropic one was picked):
+      // its state is authoritative again. A write without a model - the
+      // page adjusting the thinking or fast mode of the CURRENT model - is
+      // applied by the server to the model it holds (Opus), not to ours:
+      // the memory stays, updated with the thinking the page asked for, and
+      // the page gets our state back instead of the server's.
+      if (carriesModel) {
+        if (remembered) { delete next[surface]; return { choices: next, reply: null }; }
+        return { choices: null, reply: null };
+      }
+      if (!remembered) return { choices: null, reply: null };
+      if (isObj(req.thinking)) remembered.thinking = req.thinking;
+      return { choices: next, reply: stateReply(surface, remembered.model, remembered.thinking) };
     }
     if (!ours || status < 400) return { choices: null, reply: null };
     var thinking = isObj(req.thinking) ? req.thinking : defaultThinkingState(aliases[req.model]);
     next[surface] = { model: req.model, thinking: thinking };
+    return { choices: next, reply: stateReply(surface, req.model, thinking) };
+  }
+  // Every id a configured model is listed under -> the model.
+  function listedAliases(cfg) {
+    var aliases = Object.create(null);
+    cfg.providers.forEach(function (p) { p.models.forEach(function (m) {
+      listedIds(m).forEach(function (id) { aliases[id] = m; });
+    }); });
+    return aliases;
+  }
+  // The server's own answer shape for a surface, built on the last state it
+  // sent (thinking_by_model for every other model) with our model on top.
+  function stateReply(surface, model, thinking) {
     var base = lastServerState[surface] ? JSON.parse(JSON.stringify(lastServerState[surface])) : { id: surface };
-    var reply = { id: surface, model: req.model, thinking_by_model: Array.isArray(base.thinking_by_model) ? base.thinking_by_model : [] };
+    var reply = { id: surface, model: model, thinking_by_model: Array.isArray(base.thinking_by_model) ? base.thinking_by_model : [] };
     if (thinking) {
+      reply.thinking = JSON.parse(JSON.stringify(thinking));
       var found = false;
-      reply.thinking_by_model.forEach(function (e) { if (isObj(e) && e.id === req.model) { e.thinking = thinking; found = true; } });
-      if (!found) reply.thinking_by_model.push({ id: req.model, thinking: thinking });
+      reply.thinking_by_model.forEach(function (e) { if (isObj(e) && e.id === model) { e.thinking = thinking; found = true; } });
+      if (!found) reply.thinking_by_model.push({ id: model, thinking: thinking });
     }
-    return { choices: next, reply: reply };
+    return reply;
   }
   function onSelectionPaused(wc, params) {
     var dbg = wc.debugger;
@@ -849,10 +907,10 @@
     out.providers = cfg.allProviders.map(function (p) {
       return {
         id: p.id, baseUrl: p.baseUrl, locked: p.locked, preset: p.preset || "", modelsUrl: p.modelsUrl || "",
-        keyOk: p.apiKey.length > 8, keySource: p.keySource, effort: p.effort.slice(),
+        keyOk: p.apiKey.length > 8, keySource: p.keySource, effort: p.effort.slice(), context: p.context,
         models: p.models.map(function (m) {
-          return { id: m.id, alias: m.alias, name: m.name, description: m.description,
-            vision: m.vision, thinking: m.thinking, webSearch: m.webSearch, context1m: m.context1m,
+          return { id: m.id, alias: m.alias, listedAs: listedIds(m), name: m.name, description: m.description,
+            vision: m.vision, thinking: m.thinking, webSearch: m.webSearch, context: m.context || p.context,
             effort: m.effort || EFFORT_ORDER.slice(), effortDefault: effortDefaultOf(m), badge: m.badge };
         })
       };
@@ -871,13 +929,15 @@
   var PRESETS = [
     // Static knowledge only: where the Anthropic-compatible endpoint is,
     // where the provider lists its models (OpenAI-shaped GET /v1/models,
-    // Authorization: Bearer), and the effort values it is known to accept.
+    // Authorization: Bearer), the effort values it is known to accept and,
+    // when every model it serves has it, the context window (CONTEXT_MODES).
     // Model ids are NOT listed here - they age in months; "fetch models" on
     // the card asks the provider. Endpoints as documented for Claude Code
     // (ANTHROPIC_BASE_URL) by the vendors, 2026-09; DeepSeek's verified.
+    // DeepSeek: 1M context on every model, one price whatever the length.
     { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic",
       modelsUrl: "https://api.deepseek.com/v1/models", keyHint: "sk-... from platform.deepseek.com",
-      effort: ["low", "high", "max"] },
+      effort: ["low", "high", "max"], context: "1m" },
     { id: "kimi", label: "Kimi (Moonshot, international)", baseUrl: "https://api.moonshot.ai/anthropic",
       modelsUrl: "https://api.moonshot.ai/v1/models", keyHint: "sk-... from platform.moonshot.ai" },
     { id: "glm", label: "GLM (Z.ai, international)", baseUrl: "https://api.z.ai/api/anthropic",
@@ -921,9 +981,12 @@
       if (!picked.length) return { error: "offer at least one effort level" };
       out.effort = picked;
     }
+    if (CONTEXT_MODES.indexOf(input.context) !== -1) out.context = input.context;
     return { value: out };
   }
-  function modelPatch(input, levelsOf) {
+  // `levelsOf` / `contextOf`: the provider's, which the model inherits - only
+  // a different value is written.
+  function modelPatch(input, levelsOf, contextOf) {
     if (!isObj(input)) return { error: "model must be an object" };
     var id = cleanString(input.id, 120);
     if (!ID_RE.test(id)) return { error: "model id: letters, digits, . _ : / and - only" };
@@ -937,7 +1000,9 @@
     if (input.vision === false) out.vision = false;
     if (input.thinking === false) out.thinking = false;
     if (input.webSearch === false) out.webSearch = false;
-    if (input.context1m === true) out.context1m = true;
+    var inherited = CONTEXT_MODES.indexOf(contextOf) !== -1 ? contextOf : DEFAULT_CONTEXT;
+    var context = CONTEXT_MODES.indexOf(input.context) !== -1 ? input.context : (input.context1m === true ? "both" : "");
+    if (context && context !== inherited) out.context = context;
     // The levels come from the provider (levelsOf); the default is written
     // only when it differs from what the picker would preselect anyway.
     var levels = Array.isArray(levelsOf) && levelsOf.length ? levelsOf : EFFORT_ORDER.slice();
@@ -1041,7 +1106,7 @@
     var cfg = readConfig();
     var owner = null;
     cfg.allProviders.forEach(function (p) { if (p.id === providerId) owner = p; });
-    var mp = modelPatch(input, owner ? owner.effort : null);
+    var mp = modelPatch(input, owner ? owner.effort : null, owner ? owner.context : null);
     if (mp.error) return { ok: false, error: mp.error };
     if (lockedProvider(cfg, providerId)) return { ok: false, error: "provider " + providerId + " is set in " + JSONC_NAME + " - edit that file to change it" };
     var alias = mp.value.id.indexOf(ID_PREFIX) === 0 ? mp.value.id : ID_PREFIX + mp.value.id;
@@ -1256,7 +1321,7 @@
   });
 
   globalThis.__cdbCustomModels = { cliEnv: cliEnv, enrichBootstrap: enrichBootstrap, readConfig: readConfig,
-    selectionOutcome: selectionOutcome, rememberServerState: rememberServerState };
+    selectionOutcome: selectionOutcome, rememberServerState: rememberServerState, listedIds: listedIds };
 
   setTimeout(function () {
     var c = readConfig();

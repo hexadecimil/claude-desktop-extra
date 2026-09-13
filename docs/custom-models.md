@@ -6,7 +6,7 @@ Community feature: **Settings → Extra → Community Features → Custom models
 
 ## Setup from the app
 
-**Settings → Extra → Models → Add a provider.** Pick a preset (DeepSeek, Kimi, GLM, MiniMax, Qwen, or a gateway) or fill in a provider id and the endpoint's base URL by hand, paste the API key, **Add provider**. A preset knows the endpoint, where the provider lists its models and which effort levels its API accepts - not the models themselves, which age too fast: **Fetch models** on the card asks the provider for its list and you tick the ones to add (it also works for an unknown provider whose `/v1/models` follows the OpenAI shape). **test** sends one token with the stored key, so a wrong URL or key shows there rather than as a failed session; **detect** (in the provider form) asks which effort levels it accepts. **Add a model** / **edit** set the model id, the display name, images, thinking, the web search tool, the default effort, an optional badge. Reload the Code tab (or restart): the picker lists the new entries after the Claude models.
+**Settings → Extra → Models → Add a provider.** Pick a preset (DeepSeek, Kimi, GLM, MiniMax, Qwen, or a gateway) or fill in a provider id and the endpoint's base URL by hand, paste the API key, **Add provider**. A preset knows the endpoint, where the provider lists its models, which effort levels its API accepts and, when every model it serves has it, the context window - not the models themselves, which age too fast: **Fetch models** on the card asks the provider for its list and you tick the ones to add (it also works for an unknown provider whose `/v1/models` follows the OpenAI shape). **test** sends one token with the stored key, so a wrong URL or key shows there rather than as a failed session; **detect** (in the provider form) asks which effort levels it accepts. **Add a model** / **edit** set the model id, the display name, images, thinking, the web search tool, the default effort, the [context window](#context-window), an optional badge. Reload the Code tab (or restart): the picker lists the new entries after the Claude models.
 
 The panel writes the providers and models to `claude-desktop-extra.json` in the profile dir and the key to `custom-models/secrets.json` next to it (0600 in a 0700 directory). The key is write-only: it is never shown again and never reaches the page.
 
@@ -43,7 +43,7 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
    }
    ```
 
-3. Restart Claude Desktop (or reload the Code tab). The picker in the Code tab lists **DeepSeek Flash** after the Claude models, with the same effort menu. Pick it and the session's requests go to `api.deepseek.com`; pick Opus again and they go back to Anthropic. Sub-agents and workflows can name it too: `model: "claude-deepseek-flash"` (see [Model ids](#model-ids)).
+3. Restart Claude Desktop (or reload the Code tab). The picker in the Code tab lists **DeepSeek Flash** after the Claude models, with the same effort menu. Pick it and the session's requests go to `api.deepseek.com`; pick Opus again and they go back to Anthropic. Sub-agents and workflows can name it too: `model: "claude-deepseek-flash"` (see [Model ids](#model-ids)) - `claude-deepseek-flash[1m]` for the CLI to treat it as the 1M model it is (see [Context window](#context-window); with `"preset": "deepseek"` on the provider the picker lists it that way by itself).
 
 `logs/claude-patches.log` in the profile dir shows what was listed (`[custom-models] bootstrap enriched: …`) and `logs/custom-models.log` what was routed, one line per request, never the key.
 
@@ -58,10 +58,11 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
                                  // one-tool request the CLI sends to a small Claude model, whatever
                                  // the session's model. Name a custom model (id or claude-<id>) or
                                  // any Anthropic id (claude-opus-5) to send those there instead.
-  "surfaces": ["ccd"],           // which pickers list them, as the bootstrap names them: "ccd" is
-                                 // the desktop Code tab, "ccr" Claude Code on the web, then "chat",
-                                 // "cowork", "design"... Default: ccd only - a Cowork session runs
-                                 // in a VM and cannot reach the preload.
+  "surfaces": ["ccd", "code"],   // which pickers list them, as the bootstrap names them. The desktop
+                                 // Code tab reads two: "ccd" (the menu's catalogue) and "code" (the
+                                 // session's effort options and available ids). Then "ccr" Claude
+                                 // Code on the web, "chat", "cowork", "design"... Default: those two -
+                                 // a Cowork session runs in a VM and cannot reach the preload.
   "providers": [
     {
       "id": "deepseek",                                  // label for logs and the Settings state line
@@ -73,6 +74,8 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
       "modelsUrl": "https://api.deepseek.com/v1/models", // where "Fetch models" asks (optional, found automatically)
       "effort": ["low", "high", "max"],                  // the effort values this provider's API accepts under the
                                                          // app's names - every model inherits them (default: all five)
+      "context": "1m",                                   // "200k" | "1m" | "both": how its models are listed, see
+                                                         // Context window. Default: the preset's knowledge, else 200k
       "headers": { "x-extra": "1" },                     // optional, added to every request
       "effortMap": { "xhigh": "high" },                  // optional, see Effort below
       "models": [
@@ -81,9 +84,10 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
           "name": "DeepSeek Flash",   // picker label (default: the id)
           "description": "...",       // picker subtitle
           "badge": "beta",            // optional neutral badge next to the name
-          "context1m": false,         // also offer a "[1m]" twin (shown as "<name> 1M"), the way
-                                      // Sonnet/Opus 1M are offered. Pointless for a model whose
-                                      // context is 1M natively - leave it off
+          "context": "1m",            // "200k" (listed as claude-<id>), "1m" (as claude-<id>[1m], the
+                                      // only spelling the CLI reads as a 1M window) or "both" (the two,
+                                      // "<name>" and "<name> 1M", the way Sonnet/Opus 1M are offered).
+                                      // Default: the provider's. "context1m": true still means "both"
           "vision": true,             // false: images are replaced by a placeholder line
           "thinking": true,           // false: no effort menu, no Thinking switch, thinking always off
           "webSearch": true,          // false: the provider does not run the web_search tool for it -
@@ -102,7 +106,11 @@ The `.jsonc` (hand-edited) and the `.json` (written by the Settings panel) are m
 
 ### Model ids
 
-The Claude Code CLI only accepts model ids matching `^claude-\S+$` when the app switches a session's model, so every custom id is exposed as **`claude-<id>`** (`deepseek-flash` → `claude-deepseek-flash`; `context1m` adds `claude-deepseek-flash[1m]`). That is the id the picker sends, the id sub-agents and workflows use, and the id the routing recognises; the provider receives the bare `deepseek-flash`. An id that already starts with `claude-` (a gateway serving Claude models) is used as is - and then routed to that gateway, which is presumably why it was listed.
+The Claude Code CLI only accepts model ids matching `^claude-\S+$` when the app switches a session's model, so every custom id is exposed as **`claude-<id>`** (`deepseek-flash` → `claude-deepseek-flash`; a 1M context adds the `[1m]` suffix, `claude-deepseek-flash[1m]`). That is the id the picker sends, the id sub-agents and workflows use, and the id the routing recognises - with or without the suffix, both spellings reach the same provider model; the provider receives the bare `deepseek-flash`. An id that already starts with `claude-` (a gateway serving Claude models) is used as is - and then routed to that gateway, which is presumably why it was listed.
+
+### Context window
+
+The CLI decides a model's context window from its id alone: a model it does not know gets **200k**, and the only thing that changes that is the **`[1m]`** suffix - the spelling it uses for Sonnet/Opus 1M - which means **1M** (`CLAUDE_CODE_MAX_CONTEXT_TOKENS` is ignored for `claude-` ids). The window is not a display detail: it sets the context gauge and the point where the session auto-compacts, so a natively-1M model listed under its bare id is compacted around 200k. Hence the per-model `context`: `"200k"` lists `claude-<id>`, `"1m"` lists `claude-<id>[1m]` only, under the model's plain name, and `"both"` lists the two as `"<name>"` and `"<name> 1M"`, for a provider that prices the two windows differently, the way Anthropic does for Sonnet. The DeepSeek preset sets `"1m"` for its provider (every DeepSeek model serves 1M at one price), the others leave 200k; the model form shows the inherited value and lets each model differ.
 
 ### What reaches the provider
 
