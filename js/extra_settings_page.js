@@ -2564,8 +2564,10 @@
       var vision = field(form, "Images", checkbox(existing ? existing.vision : true),
         "Off: images are replaced by a placeholder line before the request leaves.");
       var webSearch = field(form, "Web search tool", checkbox(existing ? existing.webSearch !== false : true),
-        "Whether the provider runs the web_search tool for this model (DeepSeek's /anthropic API does). " +
-        "Off: the tool is stripped from its requests and it is not offered as the web-search model.");
+        "Whether the provider's API runs Anthropic's server-side web_search tool for this model (DeepSeek's " +
+        "/anthropic API does). Off: that tool is stripped from its requests and the model is not offered as the " +
+        "web-search model above. The model can still search through Claude Code's own WebSearch tool - that " +
+        "search then runs where the Web search setting says, Anthropic by default.");
       // The CLI trusts only the id for a model's context window: 200k for
       // anything it does not know, 1M when the id ends in [1m]. The window
       // drives the context gauge and auto-compaction.

@@ -90,9 +90,11 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
                                       // Default: the provider's. "context1m": true still means "both"
           "vision": true,             // false: images are replaced by a placeholder line
           "thinking": true,           // false: no effort menu, no Thinking switch, thinking always off
-          "webSearch": true,          // false: the provider does not run the web_search tool for it -
-                                      // the tool is stripped from its requests, and it is not offered
-                                      // as the app-wide web-search model
+          "webSearch": true,          // false: the provider's API does not run Anthropic's server-side
+                                      // web_search tool for it - the tool is stripped from its requests
+                                      // and it is not offered as the app-wide web-search model. The
+                                      // CLI's own WebSearch tool stays: the model can still search, the
+                                      // search itself runs where `webSearch` above says
           "effort": ["low", "max"],   // file-only override of the provider's levels for this model
           "effortDefault": "max"      // the preselected one (default: xhigh when offered, else the highest)
         }
