@@ -2352,12 +2352,12 @@
         });
         field(form, "Preset", preset, "Prefills the fields below; everything stays editable.");
       }
-      var id = field(form, "Provider id", input("text", existing ? existing.id : "", "deepseek"),
+      var id = field(form, "Provider id", input("text", existing ? existing.id : "", "provider-id"),
         "Short name used in logs and the Settings state line. Letters, digits, - and _.");
       if (existing) id.disabled = true;
-      var url = field(form, "Base URL", input("text", existing ? existing.baseUrl : "", "https://api.deepseek.com/anthropic"),
+      var url = field(form, "Base URL", input("text", existing ? existing.baseUrl : "", "https://api.example.com/anthropic"),
         "The Anthropic-compatible endpoint; /v1/messages is appended.");
-      var key = field(form, "API key", input("password", "", existing && existing.keyOk ? "stored - type to replace" : "sk-..."),
+      var key = field(form, "API key", input("password", "", existing && existing.keyOk ? "stored - type to replace" : "API key"),
         "Stored in a 0600 file in this profile, never shown again, sent only to that endpoint.");
       if (preset) {
         preset.addEventListener("change", function () {
@@ -2366,7 +2366,7 @@
           if (!pr) return;
           id.value = pr.id;
           url.value = pr.baseUrl;
-          key.placeholder = pr.keyHint || "sk-...";
+          key.placeholder = pr.keyHint || "API key";
         });
       }
       var actions = el("div", "cdbx-models-actions");
@@ -2413,10 +2413,10 @@
     // Add (existing === null) or edit a model of provider p.
     function modelForm(p, existing) {
       var form = el("div", "cdbx-models-form");
-      var id = field(form, "Model id", input("text", existing ? existing.id : "", "deepseek-flash"),
+      var id = field(form, "Model id", input("text", existing ? existing.id : "", "model-id"),
         "The provider's own id. The app and the CLI see it as claude-<id>.");
       if (existing) id.disabled = true;
-      var name = field(form, "Display name", input("text", existing ? (existing.name !== existing.id ? existing.name : "") : "", "DeepSeek Flash"),
+      var name = field(form, "Display name", input("text", existing ? (existing.name !== existing.id ? existing.name : "") : "", "Display name"),
         "What the picker shows.");
       var desc = field(form, "Description", input("text", existing ? existing.description : "", "optional subtitle"),
         "Optional line under the name. Anthropic's own entries have none.");
