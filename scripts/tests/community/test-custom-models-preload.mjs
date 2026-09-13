@@ -299,9 +299,9 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
   const { hooked, calls } = load(CONFIG, { responses });
   const res = await hooked(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
   const body = await res.json();
-  ok(calls.length === 1 && res.status === 400 && body.error.type === "authentication_error" &&
+  ok(calls.length === 1 && res.status === 400 && body.error.type === "invalid_request_error" &&
      /refused the API key \(HTTP 401\)/.test(body.error.message) && /api key is invalid/.test(body.error.message),
-     "a provider 401 comes back as a 400 carrying the provider's message");
+     "a provider 401 comes back as a plain 400 carrying the provider's message (not authentication_error: the app would re-authorise and restart the session)");
 }
 
 // --- a model without the web search tool ------------------------------------------
@@ -361,7 +361,38 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
   ok(/active: claude-deepseek-flash -> deepseek\/deepseek-flash/.test(text), "the activation line lists the routes");
   ok(/-> deepseek\/deepseek-flash stream=false messages=1 tools=0/.test(text), "each routed request logs one line");
   ok(!/sk-test-1234567890/.test(text), "the key never appears in the log");
+  ok(!/passthrough/.test(text), "without the debug switch the requests left alone are not logged");
   rmSync(dir, { recursive: true, force: true });
+}
+
+// --- debug switch: the passthroughs are traced too ------------------------------------
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-cm-preload-"));
+  const logPath = join(dir, "custom-models.log");
+  const { hooked, env, api } = load(CONFIG, { env: { CDB_CUSTOM_MODELS_LOG: logPath, CDB_CUSTOM_MODELS_DEBUG: "1" } });
+  ok(!("CDB_CUSTOM_MODELS_DEBUG" in env), "the debug switch is scrubbed from process.env like the others");
+  await hooked(ANTHROPIC, messagesInit({ model: "claude-opus-5", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
+  await hooked(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
+  await hooked("https://api.anthropic.com/v1/messages/count_tokens", messagesInit({ model: "claude-opus-5", messages: [{ role: "user", content: "hi" }] }));
+  await hooked("https://api.anthropic.com/api/oauth/token", { method: "POST", body: "{}" });
+  const text = readFileSync(logPath, "utf8");
+  ok(/passthrough https:\/\/api\.anthropic\.com\/v1\/messages model=claude-opus-5 \(not a custom model; routes: claude-deepseek-flash -> deepseek\/deepseek-flash/.test(text),
+     "a Claude request logs where it went, its model and the routes in force");
+  ok(/-> deepseek\/deepseek-flash stream=false/.test(text), "the routed request logs as before");
+  ok(/passthrough https:\/\/api\.anthropic\.com\/v1\/messages\/count_tokens model=claude-opus-5/.test(text), "count_tokens for a Claude model is traced too");
+  ok(!/oauth/.test(text), "requests off the Messages API stay out of the log");
+  // Routes gone (provider removed while the session runs): the trace says so.
+  const routesDir = mkdtempSync(join(tmpdir(), "cdb-cm-routes-"));
+  const routesPath = join(routesDir, "routes.json");
+  writeFileSync(routesPath, JSON.stringify({ providers: [] }));
+  const logPath2 = join(dir, "custom-models-2.log");
+  const { hooked: hooked2 } = load(CONFIG, { env: { CDB_CUSTOM_MODELS_LOG: logPath2, CDB_CUSTOM_MODELS_DEBUG: "1", CDB_CUSTOM_MODELS_ROUTES: routesPath } });
+  await hooked2(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash[1m]", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
+  const text2 = readFileSync(logPath2, "utf8");
+  ok(/passthrough https:\/\/api\.anthropic\.com\/v1\/messages model=claude-deepseek-flash\[1m\] \(not a custom model; routes: no custom model\)/.test(text2),
+     "a custom id with no route left is traced as sent to Anthropic (which will refuse it)");
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(routesDir, { recursive: true, force: true });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

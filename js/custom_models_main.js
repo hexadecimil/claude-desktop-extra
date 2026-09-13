@@ -903,6 +903,7 @@
       var rp = routesPath();
       if (rp) env.CDB_CUSTOM_MODELS_ROUTES = rp;
       if (logDir) env.CDB_CUSTOM_MODELS_LOG = _path.join(logDir, LOG_NAME);
+      if (DEBUG) env.CDB_CUSTOM_MODELS_DEBUG = "1"; // the preload then logs the passthroughs too
       return env;
     } catch (e) {
       log("cliEnv: " + (e && e.message ? e.message : String(e)) + " - session left untouched");

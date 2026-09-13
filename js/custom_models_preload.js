@@ -37,10 +37,15 @@
   // a model added or a provider removed reaches this session without a
   // restart. Absent or empty = no route.
   var routesPath = process.env.CDB_CUSTOM_MODELS_ROUTES || "";
+  // CDB_CUSTOM_MODELS_DEBUG=1 (the app's own debug switch, passed along):
+  // every Messages request that is NOT routed gets a line too, with the
+  // reason - the way to tell "went to Anthropic" from "never reached the hook".
+  var DEBUG = process.env.CDB_CUSTOM_MODELS_DEBUG === "1";
   var bunOptions = process.env.BUN_OPTIONS;
   delete process.env.CDB_CUSTOM_MODELS_JSON;
   delete process.env.CDB_CUSTOM_MODELS_LOG;
   delete process.env.CDB_CUSTOM_MODELS_ROUTES;
+  delete process.env.CDB_CUSTOM_MODELS_DEBUG;
   if (typeof bunOptions === "string") {
     // Strip only our own --preload token; a user's other BUN_OPTIONS survive.
     var kept = bunOptions.split(/\s+/).filter(function (t) {
@@ -324,9 +329,23 @@
     return hit;
   }
 
+  function requestedModel(bodyText) {
+    var m = /"model"\s*:\s*"([^"]{0,120})"/.exec(bodyText);
+    return m ? m[1] : "?";
+  }
+  function passthrough(url, bodyText, why) {
+    if (DEBUG) log("passthrough " + url.replace(/\?.*$/, "") + " model=" + requestedModel(bodyText) + " (" + why + ")");
+    return null;
+  }
+
   function route(rawFetch, input, init) {
     var url = typeof input === "string" ? input : input instanceof URL ? input.href : null;
-    if (!url || !init || typeof init.body !== "string") return null;
+    if (!url || !init || typeof init.body !== "string") {
+      if (DEBUG && input && typeof input === "object" && typeof input.url === "string" && /\/v1\/messages/.test(input.url)) {
+        log("passthrough " + input.url + " (Request object - not inspected)");
+      }
+      return null;
+    }
     var pathname = new URL(url).pathname;
     var isMessages = /\/v1\/messages$/.test(pathname);
     var isCount = /\/v1\/messages\/count_tokens$/.test(pathname);
@@ -334,7 +353,10 @@
     refreshRoutes();
     var maybeWebSearch = (!!webSearchRoute || !!webSearchAnthropic) && isMessages && init.body.indexOf('"web_search') !== -1;
     var ours = quickMatch(init.body);
-    if (!ours && !maybeWebSearch) return isMessages ? foreignPreviousId(rawFetch, input, init) : null;
+    if (!ours && !maybeWebSearch) {
+      passthrough(url, init.body, "not a custom model; routes: " + describeRoutes());
+      return isMessages ? foreignPreviousId(rawFetch, input, init) : null;
+    }
 
     var body = JSON.parse(init.body);
     var requested = String(body.model || "").replace(/\[\w+\]$/, "").trim();
@@ -355,7 +377,7 @@
         return rawFetch(input, Object.assign({}, init, { body: JSON.stringify(body) }));
       }
     }
-    if (!r) return null;
+    if (!r) return passthrough(url, init.body, "no route for " + requested + "; routes: " + describeRoutes());
     var p = r.provider, m = r.model;
 
     if (isCount) {
@@ -409,10 +431,12 @@
         log("<- " + p.id + "/" + m.id + " HTTP " + res.status + " " + t2.slice(0, 300));
         // The provider's 401/403 (wrong or revoked key) must not reach the
         // CLI as such: it would take it for its own OAuth token expiring and
-        // refresh-and-retry without end. A 400 with the provider's words
-        // shows in the session and stops there.
+        // refresh-and-retry without end. Nor as an "authentication_error"
+        // type: the desktop app reads that as its own login being gone and
+        // re-authorises, restarting the session's CLI. A plain 400 with the
+        // provider's words shows in the session and stops there.
         if (res.status === 401 || res.status === 403) {
-          return errorResponse(400, "authentication_error",
+          return errorResponse(400, "invalid_request_error",
             "claude-desktop-extra custom models: provider \"" + p.id + "\" refused the API key (HTTP " + res.status +
             ") - check it in Settings > Extra > Models. Provider said: " + t2.slice(0, 300));
         }

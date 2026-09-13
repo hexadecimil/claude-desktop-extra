@@ -314,6 +314,9 @@ function bootstrap() {
   ok(readFileSync(preloadPath, "utf8") === PRELOAD_STUB, "a stale preload is rewritten");
   const { api: api2 } = load(dir, {});
   ok(api2.cliEnv().BUN_OPTIONS === "--preload=" + preloadPath, "no prior BUN_OPTIONS: ours alone");
+  ok(!("CDB_CUSTOM_MODELS_DEBUG" in env) && !("CDB_CUSTOM_MODELS_DEBUG" in api2.cliEnv()), "no debug switch in the CLI env by default");
+  const { api: api3 } = load(dir, { CDB_CUSTOM_MODELS_DEBUG: "1" });
+  ok(api3.cliEnv().CDB_CUSTOM_MODELS_DEBUG === "1", "CDB_CUSTOM_MODELS_DEBUG=1 on the app is passed to the CLI (the preload traces its passthroughs)");
   // Live routing: the routes file the open sessions re-read.
   const routesPath = join(dir, "custom-models", "routes.json");
   ok(env.CDB_CUSTOM_MODELS_ROUTES === routesPath, "the CLI is told where the routes file is");

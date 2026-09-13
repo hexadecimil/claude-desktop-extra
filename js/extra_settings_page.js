@@ -2123,7 +2123,14 @@
         reload.type = "button";
         reload.title = "Reloads this page so the model picker lists the current models. Open sessions keep running.";
         reload.addEventListener("click", function () {
-          try { window.location.reload(); } catch (e) { toast("Could not reload: " + (e && e.message ? e.message : String(e)), true); }
+          // Close the settings dialog first (Escape, as the user would), or the
+          // reloaded page opens it again on its first section.
+          try { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true })); } catch (e) {}
+          // Cancelable: the DOM tests listen and stop the real reload.
+          if (!document.dispatchEvent(new CustomEvent("cdbx:reload", { cancelable: true }))) return;
+          setTimeout(function () {
+            try { window.location.reload(); } catch (e) { toast("Could not reload: " + (e && e.message ? e.message : String(e)), true); }
+          }, 120);
         });
         host.appendChild(reload);
       }
@@ -2265,11 +2272,13 @@
         var del = el("button", "cdbx-clear", "remove");
         del.type = "button";
         del.title = "Removes the provider and its models; the key stays in secrets.json";
+        // Two clicks within 15 s: long enough to read the label, short
+        // enough that a stray click a minute later removes nothing.
         del.addEventListener("click", function () {
           if (!del.classList.contains("cdbx-armed")) {
             del.classList.add("cdbx-armed");
             del.textContent = "remove? click again";
-            setTimeout(function () { del.classList.remove("cdbx-armed"); del.textContent = "remove"; }, 8000);
+            setTimeout(function () { del.classList.remove("cdbx-armed"); del.textContent = "remove"; }, 15000);
             return;
           }
           call("customModelsProviderDelete", p.id).then(function (okd) {

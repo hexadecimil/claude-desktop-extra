@@ -34,14 +34,16 @@ login and every Claude model stay as they are, unlike the exclusive 3P mode.
 - Presets: DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, a gateway. **Fetch models** asks the provider's
   listing (OpenAI shape first, the Anthropic Models API shape with its pagination when that is refused), a
   filter narrows a long catalogue, and a stated context length sets the model's window. A provider's
-  401/403 reaches the CLI as a 400 with the provider's words (a 401 would make it refresh its own OAuth
-  token forever); a turn answered by a model whose message ids are not Anthropic's no longer breaks the
+  401/403 reaches the CLI as a plain 400 with the provider's words (a 401 would make it refresh its own
+  OAuth token forever, an `authentication_error` would make the app re-login and restart the session); a turn answered by a model whose message ids are not Anthropic's no longer breaks the
   next Anthropic request (`diagnostics.previous_message_id` is sent as null then). The test result stays
   on the provider's card and no panel button is ever mute.
 - Routing is live: the app rewrites `custom-models/routes.json` (0600) at every change and every open session
   re-reads it on its next request - a key fixed, a model added, a provider removed, the switch, all without
   a restart. The picker still comes from the page's bootstrap: a **Reload the Code tab** button in the panel
-  refreshes it. Only a session opened before the very first provider existed needs the app restarted.
+  refreshes it (closing the settings dialog first). Only a session opened before the very first provider
+  existed needs the app restarted. `CDB_CUSTOM_MODELS_DEBUG=1` now reaches the CLI too: `custom-models.log`
+  then traces the requests left alone (`passthrough <url> model=<id> (<reason>)`), not only the routed ones.
 - Docs: `docs/custom-models.md`. Tests: `test-custom-models-main.mjs`, `test-custom-models-preload.mjs`,
   `test-extra-settings-bridge.mjs`.
 

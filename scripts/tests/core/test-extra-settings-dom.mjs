@@ -747,6 +747,20 @@ async function modelsPanel(modelsItem) {
   const reloadBtn = panel.querySelector(".cdbx-models-reload");
   ok(!!reloadBtn && reloadBtn.textContent === "Reload the Code tab" && /picker/.test(reloadBtn.title),
      "a Reload the Code tab button sits next to the switch (the picker is drawn from the page's bootstrap)");
+  {
+    // The dialog is closed first (Escape on the document, as a hand would), or
+    // the reloaded page reopens it on its first section.
+    let escapes = 0, reloads = 0;
+    const onKey = (ev) => { if (ev.key === "Escape") escapes++; };
+    const onReload = (ev) => { reloads++; ev.preventDefault(); }; // a real reload would restart this very page
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("cdbx:reload", onReload);
+    reloadBtn.click();
+    document.removeEventListener("keydown", onKey);
+    document.removeEventListener("cdbx:reload", onReload);
+    ok(escapes === 1 && reloads === 1, "Reload the Code tab sends Escape to the settings dialog, then reloads (cancelable cdbx:reload event)");
+    await sleep(200);
+  }
   ok(/reach open sessions at once/.test(panel.querySelector(".cdbx-models-files").textContent) &&
      /custom-models\/routes\.json/.test(panel.querySelector(".cdbx-models-files").textContent),
      "the footer says routing is live and names the routes file");
