@@ -189,6 +189,13 @@
   // its top models - lands on max. Overridable per provider with effortMap.
   var EFFORT_DEFAULT = { low: "low", medium: "high", high: "high", xhigh: "max", max: "max" };
 
+  // An effort value the provider does not know (a level ticked that its
+  // API does not have): it answers 400 naming the effort - the request is
+  // retried once without output_config so the turn survives.
+  function effortRefused(text) {
+    return /effort/i.test(text) && !/thinking options type cannot be disabled/i.test(text);
+  }
+
   function sanitize(body, route, opts) {
     var m = route.model, p = route.provider;
     var out = { model: m.id };
@@ -236,7 +243,7 @@
     var effortMap = p.effortMap && typeof p.effortMap === "object" ? p.effortMap : EFFORT_DEFAULT;
     var sent = body.output_config && typeof body.output_config.effort === "string" ? effortMap[body.output_config.effort] : undefined;
     var effort = m.effort !== undefined ? m.effort : sent;
-    if (think && typeof effort === "string" && effort) out.output_config = { effort: effort };
+    if (think && typeof effort === "string" && effort && !opts.dropEffort) out.output_config = { effort: effort };
     return out;
   }
 
@@ -319,11 +326,11 @@
     }
 
     var target = providerBase(p) + "/v1/messages";
-    function send(stripThinking) {
+    function send(stripThinking, dropEffort) {
       return rawFetch(target, {
         method: init.method || "POST",
         headers: outHeaders(init, p),
-        body: JSON.stringify(sanitize(body, r, { stripThinking: stripThinking })),
+        body: JSON.stringify(sanitize(body, r, { stripThinking: stripThinking, dropEffort: dropEffort })),
         signal: init.signal
       });
     }
@@ -332,15 +339,20 @@
       " stream=" + !!body.stream + " messages=" + n + " tools=" + (Array.isArray(body.tools) ? body.tools.length : 0));
 
     return (async function () {
-      var res = await send(false);
+      var res = await send(false, false);
       if (res.status === 400) {
-        // History carrying thinking blocks signed by Claude (model switched
-        // mid-session): the provider may refuse them - retry without.
         var text = "";
         try { text = await res.clone().text(); } catch (e) {}
-        if (/thinking|signature/i.test(text)) {
+        if (effortRefused(text)) {
+          // A level the provider does not know: drop the effort, keep the turn.
+          var sentEffort = body.output_config && body.output_config.effort;
+          log("400 effort " + JSON.stringify(sentEffort) + " refused by " + p.id + " -> retry without effort (untick that level in Settings > Extra > Models): " + text.slice(0, 200));
+          res = await send(false, true);
+        } else if (/thinking|signature/i.test(text) && !/thinking options type cannot be disabled/i.test(text)) {
+          // History carrying thinking blocks signed by Claude (model switched
+          // mid-session): the provider may refuse them - retry without.
           log("400 thinking/signature -> retry without thinking blocks: " + text.slice(0, 200));
-          res = await send(true);
+          res = await send(true, false);
         }
       }
       if (!res.ok) {

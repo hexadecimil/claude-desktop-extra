@@ -218,6 +218,11 @@ function bootstrap() {
   ok(pro.capabilities.web_search === false, "webSearch:false reaches the picker's capabilities");
   ok(flash.thinking.type === "effort" && flash.thinking.effort_options.map((o) => o.id).join(",") === "low,medium,high,xhigh,max",
      "thinking is type effort with the five levels (no ultracode)");
+  const three = JSON.parse(JSON.stringify(cfg));
+  three.providers[0].models[0].effort = ["low", "high", "max"]; delete three.providers[0].models[0].effortDefault;
+  const b3 = api.enrichBootstrap(bootstrap(), three).model_selector_config.find((s) => s.id === "ccd").models[3];
+  ok(b3.thinking.effort_options.map((o) => o.id).join(",") === "low,high,max" && b3.thinking.effort_options[2].recommended === true &&
+     b3.thinking.effort_options[2].name === "Max", "a three-level model offers exactly those, the highest as the (localised) default");
   ok(flash.thinking.effort_options.map((o) => o.name).join(",") === "Faible,Moyen,Élevé,Extra,Max",
      "effort labels are borrowed from the surface's own (localised) Opus entry");
   ok(flash.thinking.description === OPUS_THINKING.description, "so is the effort description");
@@ -427,6 +432,18 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   const j2 = JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8"));
   ok(JSON.stringify(j2.customModels.providers[0].models[0]) === JSON.stringify({ id: "deepseek-flash", name: "DeepSeek Flash" }),
      "defaults (thinking, vision, xhigh) are not written out: " + JSON.stringify(j2.customModels.providers[0].models[0]));
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", name: "Flash", effort: ["low", "high", "max"] });
+  ok(r.ok === true && r.providers[0].models[0].effort.join(",") === "low,high,max" && r.providers[0].models[0].effortDefault === "max",
+     "offered effort levels are stored and the default becomes the highest offered");
+  ok(JSON.stringify(JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[0]) ===
+     JSON.stringify({ id: "deepseek-flash", name: "Flash", effort: ["low", "high", "max"] }),
+     "effort is written, the automatic default is not");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", effort: ["low", "high", "max"], effortDefault: "high" });
+  ok(r.ok === true && r.providers[0].models[0].effortDefault === "high" &&
+     JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[0].effortDefault === "high",
+     "a default that differs from the automatic one is written");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", effort: [] });
+  ok(r.ok === false && /at least one/.test(r.error), "an empty level list is refused");
   r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", name: "Flash", thinking: false, vision: false, effortDefault: "high" });
   ok(r.ok === true && r.providers[0].models.length === 1 && r.providers[0].models[0].name === "Flash" && r.providers[0].models[0].thinking === false,
      "model-set on an existing id updates in place");
@@ -477,6 +494,24 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   ok(r.ok === false && r.status === 401 && /invalid api key/.test(r.error), "a provider error is reported with its message");
   r = await h["cdb-cm:provider-test"](okSenderEv, "nope");
   ok(r.ok === false && /unknown provider/.test(r.error), "testing an unknown provider is refused");
+
+  // The effort probe: one token per level, the provider's verdicts collected.
+  sandbox.__fetchCalls.length = 0;
+  sandbox.__fetchImpl = (url, init) => {
+    const lv = JSON.parse(init.body).output_config.effort;
+    return Promise.resolve(lv === "medium" || lv === "xhigh"
+      ? new Response(JSON.stringify({ error: { message: "invalid reasoning_effort: " + lv } }), { status: 400 })
+      : new Response("{}", { status: 200 }));
+  };
+  r = await h["cdb-cm:effort-probe"](okSenderEv, "ds", "deepseek-flash");
+  ok(r.ok === true && r.accepted.join(",") === "low,high,max" && Object.keys(r.rejected).join(",") === "medium,xhigh",
+     "effort-probe reports the accepted levels and the refused ones: " + JSON.stringify(r));
+  ok(sandbox.__fetchCalls.length === 5 && sandbox.__fetchCalls.every((c) => JSON.parse(c.init.body).max_tokens === 1 && JSON.parse(c.init.body).thinking.type === "enabled"),
+     "five one-token requests with thinking on");
+  sandbox.__fetchImpl = () => Promise.resolve(new Response(JSON.stringify({ error: { message: "invalid api key" } }), { status: 401 }));
+  r = await h["cdb-cm:effort-probe"](okSenderEv, "ds", "deepseek-flash");
+  ok(r.ok === false && /invalid api key/.test(r.error), "every level refused for one reason reports that reason, not 'no level'");
+  sandbox.__fetchImpl = () => Promise.resolve(new Response("{}", { status: 200 }));
 
   // Delete: model, then provider (with its secret).
   r = await h["cdb-cm:model-delete"](okSenderEv, "ds", "deepseek-flash");

@@ -2264,7 +2264,7 @@
         rm.appendChild(el("div", "cdbx-id", m.name + (m.name !== m.id ? "  (" + m.id + ")" : "")));
         var traits = [];
         traits.push("in the picker as " + m.alias);
-        traits.push(m.thinking ? "thinking, default effort " + m.effortDefault : "no thinking");
+        traits.push(m.thinking ? "effort " + (m.effort || []).join("/") + ", default " + m.effortDefault : "no thinking");
         traits.push(m.vision ? "images" : "no images");
         traits.push(m.webSearch === false ? "no web search tool" : "web search tool");
         if (m.context1m) traits.push("1M twin");
@@ -2422,14 +2422,68 @@
         "Optional line under the name. Anthropic's own entries have none.");
       var thinking = field(form, "Thinking", checkbox(existing ? existing.thinking : true),
         "Off: no effort menu, thinking never requested.");
-      var effort = el("select", "cdbx-select");
+      // Which of the app's five levels the provider actually distinguishes -
+      // the picker lists only those, and sends them unchanged. The default
+      // is chosen among the offered ones.
+      var offered = existing && Array.isArray(existing.effort) ? existing.effort.slice() : EFFORT_LEVELS.slice();
+      var levelsBox = el("div", "cdbx-models-levels");
+      var levelBoxes = {};
       EFFORT_LEVELS.forEach(function (lv) {
-        var o = el("option", "", lv);
-        o.value = lv;
-        effort.appendChild(o);
+        var lab = el("label", "cdbx-models-level");
+        var cb = checkbox(offered.indexOf(lv) !== -1);
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + lv));
+        levelsBox.appendChild(lab);
+        levelBoxes[lv] = cb;
       });
-      effort.value = existing && existing.effortDefault ? existing.effortDefault : "xhigh";
-      field(form, "Default effort", effort, "The level the picker preselects. xhigh reaches DeepSeek as max (its benchmark setting).");
+      // "detect": one token per level with the provider's key; the boxes
+      // follow what it accepted.
+      var detect = el("button", "cdbx-clear", "detect");
+      detect.type = "button";
+      detect.title = "Send one token with each level and tick the ones the provider accepts (five minimal requests)";
+      detect.disabled = !(p.keyOk);
+      detect.addEventListener("click", function () {
+        var mid = id.value.trim();
+        if (!mid) { toast("Type the model id first", true); return; }
+        detect.disabled = true;
+        detect.textContent = "detecting...";
+        api.customModelsEffortProbe(p.id, mid).then(function (r) {
+          detect.disabled = false;
+          detect.textContent = "detect";
+          if (failed(r)) { toast("Could not detect: " + reason(r), true); return; }
+          EFFORT_LEVELS.forEach(function (lv) { levelBoxes[lv].checked = r.accepted.indexOf(lv) !== -1; });
+          refillEffort();
+          var refused = Object.keys(r.rejected || {});
+          toast(mid + " accepts " + r.accepted.join(", ") + (refused.length ? " - refused: " + refused.join(", ") : ""));
+        }, function (err) {
+          detect.disabled = false;
+          detect.textContent = "detect";
+          toast("Could not detect: " + (err && err.message ? err.message : String(err)), true);
+        });
+      });
+      levelsBox.appendChild(detect);
+      field(form, "Effort levels offered", levelsBox,
+        "Tick the levels the provider's API accepts under these names (DeepSeek: low, high, max), or " +
+        "let detect ask it. Only those appear in the picker's effort menu, sent as they are; a level " +
+        "the provider still refuses is dropped from that request and logged.");
+      var effort = el("select", "cdbx-select");
+      function refillEffort() {
+        var cur = effort.value;
+        clear(effort);
+        var avail = EFFORT_LEVELS.filter(function (lv) { return levelBoxes[lv].checked; });
+        avail.forEach(function (lv) {
+          var o = el("option", "", lv);
+          o.value = lv;
+          effort.appendChild(o);
+        });
+        var want = existing && existing.effortDefault ? existing.effortDefault : "xhigh";
+        if (avail.indexOf(cur) !== -1) want = cur;
+        if (avail.indexOf(want) === -1) want = avail.indexOf("xhigh") !== -1 ? "xhigh" : avail[avail.length - 1];
+        effort.value = want || "";
+      }
+      EFFORT_LEVELS.forEach(function (lv) { levelBoxes[lv].addEventListener("change", refillEffort); });
+      refillEffort();
+      field(form, "Default effort", effort, "The level the picker preselects, among those offered.");
       var vision = field(form, "Images", checkbox(existing ? existing.vision : true),
         "Off: images are replaced by a placeholder line before the request leaves.");
       var webSearch = field(form, "Web search tool", checkbox(existing ? existing.webSearch !== false : true),
@@ -2446,7 +2500,8 @@
         save.disabled = true;
         var payload = { id: id.value, name: name.value, description: desc.value, badge: badge.value,
           thinking: thinking.checked, vision: vision.checked, webSearch: webSearch.checked,
-          context1m: context1m.checked, effortDefault: effort.value };
+          context1m: context1m.checked, effortDefault: effort.value,
+          effort: EFFORT_LEVELS.filter(function (lv) { return levelBoxes[lv].checked; }) };
         call("customModelsModelSet", p.id, payload).then(function (okd) {
           if (!okd) save.disabled = false;
           else toast(existing ? "Model " + existing.id + " saved" : "Model " + payload.id.trim() + " added to " + p.id);

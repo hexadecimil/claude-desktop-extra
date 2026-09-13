@@ -246,6 +246,23 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
   ok(c2.length === 1 && r2.status === 429, "other errors are returned without a retry");
 }
 
+// --- an effort level the provider does not know --------------------------------------
+{
+  const bad = new Response(JSON.stringify({ error: { message: "invalid reasoning_effort: xhigh" } }), { status: 400 });
+  const good = new Response("{}", { status: 200 });
+  const { hooked, calls } = load(CONFIG, { responses: [bad, good] });
+  const res = await hooked(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 100,
+    messages: [{ role: "user", content: "b" }], output_config: { effort: "xhigh" } }));
+  ok(calls.length === 2 && "output_config" in JSON.parse(calls[0].init.body) && !("output_config" in JSON.parse(calls[1].init.body)),
+     "a 400 naming the effort is retried once without output_config");
+  ok(JSON.parse(calls[1].init.body).thinking.type === "enabled", "thinking stays on for that retry");
+  ok(res.status === 200, "and the retry's answer is what the CLI gets");
+  const eff = new Response(JSON.stringify({ error: { message: "thinking options type cannot be disabled when reasoning_effort is set" } }), { status: 400 });
+  const { hooked: h2, calls: c2 } = load(CONFIG, { responses: [eff] });
+  await h2(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 100, messages: [{ role: "user", content: "b" }] }));
+  ok(c2.length === 1, "the thinking-disabled effort complaint is not mistaken for an unknown level");
+}
+
 // --- log file ----------------------------------------------------------------------
 {
   const dir = mkdtempSync(join(tmpdir(), "cdb-cm-preload-"));

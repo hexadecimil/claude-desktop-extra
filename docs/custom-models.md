@@ -85,8 +85,8 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
           "webSearch": true,          // false: the provider does not run the web_search tool for it -
                                       // the tool is stripped from its requests, and it is not offered
                                       // as the app-wide web-search model
-          "effort": ["low", "medium", "high", "xhigh", "max"],  // levels to offer (default: all five)
-          "effortDefault": "xhigh"    // the recommended one (default: xhigh when offered)
+          "effort": ["low", "high", "max"],  // levels the picker offers, sent as they are (default: all five)
+          "effortDefault": "max"      // the preselected one (default: xhigh when offered, else the highest)
         }
       ]
     }
@@ -104,7 +104,7 @@ The Claude Code CLI only accepts model ids matching `^claude-\S+$` when the app 
 
 The target is Anthropic-**compatible**, not Anthropic, so the CLI's request is reduced to the documented subset of the Messages API: `model`, `max_tokens`, `stream`, `temperature`, `top_p`, `stop_sequences`, `system` (text blocks), `messages` (text, image, tool_use, tool_result, thinking, native web search), `tools` (name/description/input_schema, plus the server-side web search tool), `tool_choice`, `thinking`, `output_config.effort`. Dropped: `metadata`, `context_management`, `top_k`, every `cache_control`, MCP toolsets, `document` blocks other than plain text (replaced by a one-line placeholder), the `anthropic-beta` headers and the Anthropic OAuth `Authorization` (the provider gets `x-api-key` only). Mid-conversation `system` messages (the CLI's `/effort` and friends) are folded into the next user turn as `[system] …`, and turns are merged to keep the strict user/assistant alternation. `count_tokens` is estimated locally (chars / 4) - the compatible endpoints do not serve it.
 
-**Effort.** The app's five levels are mapped to the provider's `output_config.effort`; the default map is `low→low, medium→high, high→high, xhigh→max, max→max` - DeepSeek only knows low/high/max, and its published benchmarks ran at max, so the app's own default (`xhigh`) lands there. `effortMap` overrides any of the five. Effort never travels with thinking off (DeepSeek answers 400 to that), and the thinking budget is clamped to 16 000 tokens.
+**Effort.** The picker's effort menu lists the levels the model offers (`effort`, default all five: low, medium, high, xhigh, max) and sends the chosen one unchanged as `output_config.effort`. Offer only the values the provider's API knows under those names: DeepSeek knows `low`, `high`, `max`, so its preset lists exactly those and the default lands on `max` (the setting its benchmarks ran at). **detect** in the model form asks the provider itself - one token with each level - and ticks what it accepted. Should a provider still refuse a level, the request is retried once without effort and the refusal is logged. `effortMap` (per provider) renames levels on the way out for the rare API that spells them differently; without it, `medium` and `xhigh` are sent as `high` and `max` when they reach a provider that was not given an explicit list. Effort never travels with thinking off (DeepSeek answers 400 to that), and the thinking budget is clamped to 16 000 tokens.
 
 **Switching models mid-session.** A history that carries thinking blocks signed by Claude may be refused by the provider with a 400 mentioning the signature; the request is retried once without those blocks. Other errors are returned to the CLI as they are.
 

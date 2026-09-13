@@ -383,11 +383,19 @@
     return null;
   }
 
+  // The level the picker preselects: the configured one if it is offered,
+  // else xhigh when offered (the app's own default for its top models), else
+  // the highest level offered.
+  function effortDefaultOf(m) {
+    if (!m.thinking) return "";
+    var levels = m.effort || EFFORT_ORDER;
+    if (m.effortDefault && levels.indexOf(m.effortDefault) !== -1) return m.effortDefault;
+    return levels.indexOf("xhigh") !== -1 ? "xhigh" : levels[levels.length - 1];
+  }
   function thinkingSpec(m, template) {
     if (!m.thinking) return { type: "none" };
     var levels = m.effort || EFFORT_ORDER;
-    var rec = m.effortDefault && levels.indexOf(m.effortDefault) !== -1 ? m.effortDefault
-      : (levels.indexOf("xhigh") !== -1 ? "xhigh" : levels[levels.length - 1]);
+    var rec = effortDefaultOf(m);
     var byId = Object.create(null);
     var badge = null;
     if (template) {
@@ -485,10 +493,7 @@
   }
   function defaultThinkingState(m) {
     if (!m || !m.thinking) return null;
-    var levels = m.effort || EFFORT_ORDER;
-    var rec = m.effortDefault && levels.indexOf(m.effortDefault) !== -1 ? m.effortDefault
-      : (levels.indexOf("xhigh") !== -1 ? "xhigh" : levels[levels.length - 1]);
-    return { type: "effort", effort: rec };
+    return { type: "effort", effort: effortDefaultOf(m) };
   }
 
   // ---- remembered selection --------------------------------------------------
@@ -834,7 +839,7 @@
         models: p.models.map(function (m) {
           return { id: m.id, alias: m.alias, name: m.name, description: m.description,
             vision: m.vision, thinking: m.thinking, webSearch: m.webSearch, context1m: m.context1m,
-            effortDefault: m.effortDefault || (m.thinking ? "xhigh" : ""), badge: m.badge };
+            effort: m.effort || EFFORT_ORDER.slice(), effortDefault: effortDefaultOf(m), badge: m.badge };
         })
       };
     });
@@ -852,8 +857,11 @@
   var PRESETS = [
     { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic",
       keyHint: "sk-... from platform.deepseek.com",
-      models: [{ id: "deepseek-flash", name: "DeepSeek Flash", vision: true, thinking: true },
-        { id: "deepseek-pro", name: "DeepSeek Pro", vision: false, thinking: true }] }
+      // DeepSeek's API knows three effort values: low / high / max. Listing
+      // exactly those keeps the picker honest (no two labels for one value)
+      // and the default lands on max, the setting its benchmarks ran at.
+      models: [{ id: "deepseek-flash", name: "DeepSeek Flash", vision: true, thinking: true, effort: ["low", "high", "max"] },
+        { id: "deepseek-pro", name: "DeepSeek Pro", vision: false, thinking: true, effort: ["low", "high", "max"] }] }
   ];
 
   function cleanString(v, max) {
@@ -884,8 +892,17 @@
     if (input.thinking === false) out.thinking = false;
     if (input.webSearch === false) out.webSearch = false;
     if (input.context1m === true) out.context1m = true;
-    if (typeof input.effortDefault === "string" && EFFORT_ORDER.indexOf(input.effortDefault) !== -1 &&
-        input.effortDefault !== "xhigh") out.effortDefault = input.effortDefault;
+    var levels = EFFORT_ORDER.slice();
+    if (Array.isArray(input.effort)) {
+      var picked = EFFORT_ORDER.filter(function (l) { return input.effort.indexOf(l) !== -1; });
+      if (!picked.length) return { error: "offer at least one effort level, or turn thinking off" };
+      if (picked.length !== EFFORT_ORDER.length) out.effort = picked;
+      levels = picked;
+    }
+    // Written only when it differs from what the picker would preselect anyway.
+    var auto = levels.indexOf("xhigh") !== -1 ? "xhigh" : levels[levels.length - 1];
+    if (typeof input.effortDefault === "string" && levels.indexOf(input.effortDefault) !== -1 &&
+        input.effortDefault !== auto) out.effortDefault = input.effortDefault;
     return { value: out };
   }
   function findJsonProvider(cur, id) {
@@ -1041,6 +1058,54 @@
     });
     if (!w.ok) return w;
     return detail(readConfig());
+  });
+
+  // Which of the app's five effort levels a provider accepts for a model:
+  // one token with each value, in parallel. What we cannot know from here,
+  // the provider's own answer settles. Five minimum-size requests.
+  _ipc.handle("cdb-cm:effort-probe", function (ev, providerId, modelId) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    providerId = cleanString(providerId, 40);
+    modelId = cleanString(modelId, 120);
+    if (!ID_RE.test(modelId)) return { ok: false, error: "bad model id" };
+    var cfg = readConfig();
+    var p = null;
+    cfg.allProviders.forEach(function (x) { if (x.id === providerId) p = x; });
+    if (!p) return { ok: false, error: "unknown provider " + providerId };
+    if (!p.apiKey) return { ok: false, error: "no API key for provider " + providerId };
+    var headers = { "content-type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": p.apiKey };
+    if (p.headers) Object.keys(p.headers).forEach(function (k) { if (typeof p.headers[k] === "string") headers[k] = p.headers[k]; });
+    return Promise.all(EFFORT_ORDER.map(function (level) {
+      var body = { model: modelId, max_tokens: 1, messages: [{ role: "user", content: "ping" }],
+        thinking: { type: "enabled", budget_tokens: 1024 }, output_config: { effort: level } };
+      var ctl = new AbortController();
+      var timer = setTimeout(function () { ctl.abort(); }, 20000);
+      return fetch(p.baseUrl + "/v1/messages", { method: "POST", headers: headers, body: JSON.stringify(body), signal: ctl.signal })
+        .then(function (res) {
+          return res.text().then(function (text) {
+            clearTimeout(timer);
+            if (res.ok) return { level: level, ok: true };
+            var msg = text.slice(0, 200);
+            try { var j = JSON.parse(text); if (j && j.error && j.error.message) msg = j.error.message; } catch (e) {}
+            return { level: level, ok: false, status: res.status, error: msg };
+          });
+        }, function (e) {
+          clearTimeout(timer);
+          return { level: level, ok: false, error: e && e.name === "AbortError" ? "no answer within 20 s" : (e && e.message ? e.message : String(e)) };
+        });
+    })).then(function (results) {
+      var accepted = results.filter(function (r) { return r.ok; }).map(function (r) { return r.level; });
+      var rejected = {};
+      results.forEach(function (r) { if (!r.ok) rejected[r.level] = (r.status ? "HTTP " + r.status + ": " : "") + r.error; });
+      // Every level refused for the same reason is not an effort problem
+      // (bad key, wrong URL, unknown model): say so instead of "none".
+      if (!accepted.length) {
+        var msgs = Object.keys(rejected).map(function (k) { return rejected[k]; });
+        var same = msgs.every(function (m) { return m === msgs[0]; });
+        return { ok: false, error: same ? msgs[0] : "every level was refused: " + JSON.stringify(rejected) };
+      }
+      return { ok: true, accepted: accepted, rejected: rejected };
+    });
   });
 
   // A one-token round trip to the provider with the stored key, so a typo in

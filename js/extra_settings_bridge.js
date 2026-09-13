@@ -155,7 +155,8 @@
       return ipcRenderer.invoke("cdb-cm:model-set", String(providerId || ""), model && typeof model === "object" ? {
         id: String(model.id || ""), name: String(model.name || ""), description: String(model.description || ""),
         badge: String(model.badge || ""), thinking: model.thinking !== false, vision: model.vision !== false,
-        webSearch: model.webSearch !== false, context1m: model.context1m === true, effortDefault: String(model.effortDefault || "")
+        webSearch: model.webSearch !== false, context1m: model.context1m === true, effortDefault: String(model.effortDefault || ""),
+        effort: Array.isArray(model.effort) ? model.effort.map(String) : undefined
       } : {});
     },
     customModelsModelDelete: function (providerId, modelId) {
@@ -163,6 +164,9 @@
     },
     customModelsTest: function (id) {
       return ipcRenderer.invoke("cdb-cm:provider-test", String(id || ""));
+    },
+    customModelsEffortProbe: function (providerId, modelId) {
+      return ipcRenderer.invoke("cdb-cm:effort-probe", String(providerId || ""), String(modelId || ""));
     },
 
     // Frameless main window, no window-control buttons, no shadow. BOTH channels
