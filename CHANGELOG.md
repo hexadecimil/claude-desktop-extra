@@ -31,6 +31,13 @@ login and every Claude model stay as they are, unlike the exclusive 3P mode.
   menu works for a custom model and `set_session_model` accepts it. A per-model context window (`200k`,
   `1m`, `both`) decides the id spelling, since the CLI reads only the `[1m]` suffix for a 1M window - the
   DeepSeek preset sets `1m`. The remembered choice survives the page's thinking/fast-mode writes.
+- Presets: DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, a gateway. **Fetch models** asks the provider's
+  listing (OpenAI shape first, the Anthropic Models API shape with its pagination when that is refused), a
+  filter narrows a long catalogue, and a stated context length sets the model's window. A provider's
+  401/403 reaches the CLI as a 400 with the provider's words (a 401 would make it refresh its own OAuth
+  token forever); a turn answered by a model whose message ids are not Anthropic's no longer breaks the
+  next Anthropic request (`diagnostics.previous_message_id` is sent as null then). The test result stays
+  on the provider's card and no panel button is ever mute.
 - Docs: `docs/custom-models.md`. Tests: `test-custom-models-main.mjs`, `test-custom-models-preload.mjs`.
 
 ## 2026-09-10 (later)
