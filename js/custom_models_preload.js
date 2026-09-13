@@ -359,6 +359,15 @@
         var t2 = "";
         try { t2 = await res.clone().text(); } catch (e) {}
         log("<- " + p.id + "/" + m.id + " HTTP " + res.status + " " + t2.slice(0, 300));
+        // The provider's 401/403 (wrong or revoked key) must not reach the
+        // CLI as such: it would take it for its own OAuth token expiring and
+        // refresh-and-retry without end. A 400 with the provider's words
+        // shows in the session and stops there.
+        if (res.status === 401 || res.status === 403) {
+          return errorResponse(400, "authentication_error",
+            "claude-desktop-extra custom models: provider \"" + p.id + "\" refused the API key (HTTP " + res.status +
+            ") - check it in Settings > Extra > Models. Provider said: " + t2.slice(0, 300));
+        }
       }
       return res;
     })();

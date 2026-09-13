@@ -224,6 +224,18 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
      "a normal Opus request is not rewritten");
 }
 
+// --- a provider 401: rewritten so the CLI does not chase its own OAuth token ---
+{
+  const responses = [new Response(JSON.stringify({ error: { message: "Authentication Fails, Your api key is invalid" } }),
+    { status: 401, headers: { "content-type": "application/json" } })];
+  const { hooked, calls } = load(CONFIG, { responses });
+  const res = await hooked(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
+  const body = await res.json();
+  ok(calls.length === 1 && res.status === 400 && body.error.type === "authentication_error" &&
+     /refused the API key \(HTTP 401\)/.test(body.error.message) && /api key is invalid/.test(body.error.message),
+     "a provider 401 comes back as a 400 carrying the provider's message");
+}
+
 // --- a model without the web search tool ------------------------------------------
 {
   const cfg = JSON.parse(JSON.stringify(CONFIG));
