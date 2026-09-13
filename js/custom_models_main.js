@@ -225,12 +225,26 @@
     }
     var k = resolveKey(Object.assign({}, raw, { id: id }), idx, secrets);
     var p = { id: id, baseUrl: baseUrl, apiKey: k.key, keySource: k.source, locked: locked, models: [] };
+    if (typeof raw.preset === "string" && presetOf(raw.preset)) p.preset = raw.preset;
+    // The effort values the provider's API accepts under the app's names -
+    // an API convention, so it lives on the provider; a model may still
+    // override it in the file. Absent: the preset's knowledge, else all five.
+    var levels = null;
+    if (Array.isArray(raw.effort)) {
+      levels = EFFORT_ORDER.filter(function (l) { return raw.effort.indexOf(l) !== -1; });
+      if (!levels.length) levels = null;
+    }
+    if (!levels && p.preset && presetOf(p.preset) && presetOf(p.preset).effort) levels = presetOf(p.preset).effort.slice();
+    p.effort = levels || EFFORT_ORDER.slice();
+    if (typeof raw.modelsUrl === "string" && /^https?:\/\/[^\s]+$/.test(raw.modelsUrl.trim())) p.modelsUrl = raw.modelsUrl.trim();
     if (isObj(raw.headers)) p.headers = raw.headers;
     if (isObj(raw.effortMap)) p.effortMap = raw.effortMap;
     if (typeof raw.webSearch === "string" && raw.webSearch.trim()) p.webSearch = raw.webSearch.trim();
     (Array.isArray(raw.models) ? raw.models : []).forEach(function (m, i) {
       var n = normaliseModel(m, id, i);
-      if (n) p.models.push(n);
+      if (!n) return;
+      if (!n.effort) n.effort = p.effort.slice();
+      p.models.push(n);
     });
     return p;
   }
@@ -834,8 +848,8 @@
     var out = summary(cfg);
     out.providers = cfg.allProviders.map(function (p) {
       return {
-        id: p.id, baseUrl: p.baseUrl, locked: p.locked,
-        keyOk: p.apiKey.length > 8, keySource: p.keySource,
+        id: p.id, baseUrl: p.baseUrl, locked: p.locked, preset: p.preset || "", modelsUrl: p.modelsUrl || "",
+        keyOk: p.apiKey.length > 8, keySource: p.keySource, effort: p.effort.slice(),
         models: p.models.map(function (m) {
           return { id: m.id, alias: m.alias, name: m.name, description: m.description,
             vision: m.vision, thinking: m.thinking, webSearch: m.webSearch, context1m: m.context1m,
@@ -855,14 +869,33 @@
   // speak the Anthropic Messages API. A preset is a suggestion, every field
   // stays editable.
   var PRESETS = [
+    // Static knowledge only: where the Anthropic-compatible endpoint is,
+    // where the provider lists its models (OpenAI-shaped GET /v1/models,
+    // Authorization: Bearer), and the effort values it is known to accept.
+    // Model ids are NOT listed here - they age in months; "fetch models" on
+    // the card asks the provider. Endpoints as documented for Claude Code
+    // (ANTHROPIC_BASE_URL) by the vendors, 2026-09; DeepSeek's verified.
     { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic",
-      keyHint: "sk-... from platform.deepseek.com",
-      // DeepSeek's API knows three effort values: low / high / max. Listing
-      // exactly those keeps the picker honest (no two labels for one value)
-      // and the default lands on max, the setting its benchmarks ran at.
-      models: [{ id: "deepseek-flash", name: "DeepSeek Flash", vision: true, thinking: true, effort: ["low", "high", "max"] },
-        { id: "deepseek-pro", name: "DeepSeek Pro", vision: false, thinking: true, effort: ["low", "high", "max"] }] }
+      modelsUrl: "https://api.deepseek.com/v1/models", keyHint: "sk-... from platform.deepseek.com",
+      effort: ["low", "high", "max"] },
+    { id: "kimi", label: "Kimi (Moonshot, international)", baseUrl: "https://api.moonshot.ai/anthropic",
+      modelsUrl: "https://api.moonshot.ai/v1/models", keyHint: "sk-... from platform.moonshot.ai" },
+    { id: "glm", label: "GLM (Z.ai, international)", baseUrl: "https://api.z.ai/api/anthropic",
+      keyHint: "from z.ai" },
+    { id: "glm-cn", label: "GLM (Zhipu, China)", baseUrl: "https://open.bigmodel.cn/api/anthropic",
+      keyHint: "from open.bigmodel.cn" },
+    { id: "minimax", label: "MiniMax (international)", baseUrl: "https://api.minimax.io/anthropic",
+      keyHint: "from platform.minimax.io" },
+    { id: "qwen", label: "Qwen (DashScope)", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic",
+      modelsUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/models", keyHint: "sk-... from DashScope" },
+    { id: "gateway", label: "Anthropic-compatible gateway (LiteLLM, OpenRouter...)", baseUrl: "",
+      keyHint: "the gateway's key" }
   ];
+  function presetOf(id) {
+    var out = null;
+    PRESETS.forEach(function (pr) { if (pr.id === id) out = pr; });
+    return out;
+  }
 
   function cleanString(v, max) {
     return typeof v === "string" ? v.trim().slice(0, max || 200) : "";
@@ -875,9 +908,22 @@
     if (!PROVIDER_ID_RE.test(id)) return { error: "provider id: letters, digits, - and _ only" };
     var baseUrl = cleanString(input.baseUrl, 300).replace(/\/+$/, "");
     if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) return { error: "base URL must start with http:// or https://" };
-    return { value: { id: id, baseUrl: baseUrl } };
+    var out = { id: id, baseUrl: baseUrl };
+    var preset = cleanString(input.preset, 40);
+    if (preset && presetOf(preset)) out.preset = preset;
+    var modelsUrl = cleanString(input.modelsUrl, 300);
+    if (modelsUrl) {
+      if (!/^https?:\/\/[^\s]+$/.test(modelsUrl)) return { error: "models URL must start with http:// or https://" };
+      out.modelsUrl = modelsUrl;
+    }
+    if (Array.isArray(input.effort)) {
+      var picked = EFFORT_ORDER.filter(function (l) { return input.effort.indexOf(l) !== -1; });
+      if (!picked.length) return { error: "offer at least one effort level" };
+      out.effort = picked;
+    }
+    return { value: out };
   }
-  function modelPatch(input) {
+  function modelPatch(input, levelsOf) {
     if (!isObj(input)) return { error: "model must be an object" };
     var id = cleanString(input.id, 120);
     if (!ID_RE.test(id)) return { error: "model id: letters, digits, . _ : / and - only" };
@@ -892,14 +938,9 @@
     if (input.thinking === false) out.thinking = false;
     if (input.webSearch === false) out.webSearch = false;
     if (input.context1m === true) out.context1m = true;
-    var levels = EFFORT_ORDER.slice();
-    if (Array.isArray(input.effort)) {
-      var picked = EFFORT_ORDER.filter(function (l) { return input.effort.indexOf(l) !== -1; });
-      if (!picked.length) return { error: "offer at least one effort level, or turn thinking off" };
-      if (picked.length !== EFFORT_ORDER.length) out.effort = picked;
-      levels = picked;
-    }
-    // Written only when it differs from what the picker would preselect anyway.
+    // The levels come from the provider (levelsOf); the default is written
+    // only when it differs from what the picker would preselect anyway.
+    var levels = Array.isArray(levelsOf) && levelsOf.length ? levelsOf : EFFORT_ORDER.slice();
     var auto = levels.indexOf("xhigh") !== -1 ? "xhigh" : levels[levels.length - 1];
     if (typeof input.effortDefault === "string" && levels.indexOf(input.effortDefault) !== -1 &&
         input.effortDefault !== auto) out.effortDefault = input.effortDefault;
@@ -963,6 +1004,12 @@
       var i = findJsonProvider(cur, pp.value.id);
       var prev = i === -1 ? {} : cur.providers[i];
       var next = Object.assign({}, prev, pp.value);
+      var preset = pp.value.preset || prev.preset;
+      // The preset is endpoint knowledge attached at creation: an edit that
+      // does not name one keeps it. The models URL is a plain field: empty
+      // clears it.
+      if (!pp.value.modelsUrl) delete next.modelsUrl;
+      if (pp.value.effort && pp.value.effort.length === EFFORT_ORDER.length && !(preset && presetOf(preset) && presetOf(preset).effort)) delete next.effort;
       if (key) next.apiKeyStored = true;
       if (!Array.isArray(next.models)) next.models = [];
       if (i === -1) cur.providers.push(next); else cur.providers[i] = next;
@@ -991,9 +1038,11 @@
   _ipc.handle("cdb-cm:model-set", function (ev, providerId, input) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
     providerId = cleanString(providerId, 40);
-    var mp = modelPatch(input);
-    if (mp.error) return { ok: false, error: mp.error };
     var cfg = readConfig();
+    var owner = null;
+    cfg.allProviders.forEach(function (p) { if (p.id === providerId) owner = p; });
+    var mp = modelPatch(input, owner ? owner.effort : null);
+    if (mp.error) return { ok: false, error: mp.error };
     if (lockedProvider(cfg, providerId)) return { ok: false, error: "provider " + providerId + " is set in " + JSONC_NAME + " - edit that file to change it" };
     var alias = mp.value.id.indexOf(ID_PREFIX) === 0 ? mp.value.id : ID_PREFIX + mp.value.id;
     var clash = cfg.allProviders.some(function (p) {
@@ -1060,6 +1109,70 @@
     return detail(readConfig());
   });
 
+  // The provider's own model list. Tried in order: the provider's modelsUrl
+  // (preset or typed), then the Anthropic shape at <baseUrl>/v1/models, then
+  // the OpenAI shape at <origin>/v1/models and <origin>/models. Both shapes
+  // answer {data:[{id, display_name?}]}; the key goes as x-api-key AND
+  // Authorization: Bearer, whichever the endpoint reads.
+  function parseModelList(text) {
+    var j;
+    try { j = JSON.parse(text); } catch (e) { return null; }
+    var arr = Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : (j && Array.isArray(j.models) ? j.models : null));
+    if (!arr) return null;
+    var out = [];
+    arr.forEach(function (m) {
+      var id = isObj(m) ? (typeof m.id === "string" ? m.id : (typeof m.name === "string" ? m.name : "")) : (typeof m === "string" ? m : "");
+      if (!id || !ID_RE.test(id)) return;
+      out.push({ id: id, name: isObj(m) && typeof m.display_name === "string" && m.display_name ? m.display_name : id });
+    });
+    return out;
+  }
+  _ipc.handle("cdb-cm:models-list", function (ev, providerId) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    providerId = cleanString(providerId, 40);
+    var cfg = readConfig();
+    var p = null;
+    cfg.allProviders.forEach(function (x) { if (x.id === providerId) p = x; });
+    if (!p) return { ok: false, error: "unknown provider " + providerId };
+    if (!p.apiKey) return { ok: false, error: "no API key for provider " + providerId };
+    var origin;
+    try { origin = new _URL(p.baseUrl).origin; } catch (e) { origin = null; }
+    var candidates = [];
+    var pr = p.preset ? presetOf(p.preset) : null;
+    if (p.modelsUrl) candidates.push(p.modelsUrl);
+    if (pr && pr.modelsUrl) candidates.push(pr.modelsUrl);
+    candidates.push(p.baseUrl + "/v1/models");
+    if (origin) candidates.push(origin + "/v1/models", origin + "/models");
+    var seen = Object.create(null);
+    candidates = candidates.filter(function (u) { if (seen[u]) return false; seen[u] = true; return true; });
+    var headers = { "accept": "application/json", "x-api-key": p.apiKey, "authorization": "Bearer " + p.apiKey, "anthropic-version": "2023-06-01" };
+    if (p.headers) Object.keys(p.headers).forEach(function (k) { if (typeof p.headers[k] === "string") headers[k] = p.headers[k]; });
+    var failures = [];
+    function tryNext(i) {
+      if (i >= candidates.length) {
+        return { ok: false, error: "no model list found - tried " + candidates.join(", ") +
+          (failures.length ? " (" + failures.join("; ") + ")" : "") + ". Add the models by hand." };
+      }
+      var url = candidates[i];
+      var ctl = new AbortController();
+      var timer = setTimeout(function () { ctl.abort(); }, 15000);
+      return fetch(url, { method: "GET", headers: headers, signal: ctl.signal }).then(function (res) {
+        return res.text().then(function (text) {
+          clearTimeout(timer);
+          if (!res.ok) { failures.push(url + " -> HTTP " + res.status); return tryNext(i + 1); }
+          var list = parseModelList(text);
+          if (!list || !list.length) { failures.push(url + " -> no model list in the answer"); return tryNext(i + 1); }
+          return { ok: true, source: url, models: list };
+        });
+      }, function (e) {
+        clearTimeout(timer);
+        failures.push(url + " -> " + (e && e.name === "AbortError" ? "no answer within 15 s" : (e && e.message ? e.message : String(e))));
+        return tryNext(i + 1);
+      });
+    }
+    return tryNext(0);
+  });
+
   // Which of the app's five effort levels a provider accepts for a model:
   // one token with each value, in parallel. What we cannot know from here,
   // the provider's own answer settles. Five minimum-size requests.
@@ -1067,12 +1180,13 @@
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
     providerId = cleanString(providerId, 40);
     modelId = cleanString(modelId, 120);
-    if (!ID_RE.test(modelId)) return { ok: false, error: "bad model id" };
     var cfg = readConfig();
     var p = null;
     cfg.allProviders.forEach(function (x) { if (x.id === providerId) p = x; });
     if (!p) return { ok: false, error: "unknown provider " + providerId };
     if (!p.apiKey) return { ok: false, error: "no API key for provider " + providerId };
+    if (!modelId && p.models.length) modelId = p.models[0].id;
+    if (!ID_RE.test(modelId)) return { ok: false, error: "add a model first - the probe sends one token to it with each level" };
     var headers = { "content-type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": p.apiKey };
     if (p.headers) Object.keys(p.headers).forEach(function (k) { if (typeof p.headers[k] === "string") headers[k] = p.headers[k]; });
     return Promise.all(EFFORT_ORDER.map(function (level) {

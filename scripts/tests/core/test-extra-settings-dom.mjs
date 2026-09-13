@@ -726,13 +726,13 @@ async function modelsPanel(modelsItem) {
     surfaces: ["ccd"], models: 2, webSearch: "claude-deepseek-flash", webSearchLocked: false,
     anthropicModels: [{ id: "claude-opus-5", name: "Opus 5" }, { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }],
     presets: [{ id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", keyHint: "sk-...",
-      models: [{ id: "deepseek-flash", name: "DeepSeek Flash" }] }],
+      modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"] }],
     paths: { json: "/home/u/.config/Claude/claude-desktop-extra.json", jsonc: "/home/u/.config/Claude/claude-desktop-extra.jsonc",
       secrets: "/home/u/.config/Claude/custom-models/secrets.json" },
     providers: [
-      { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored",
+      { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored", preset: "deepseek", modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"],
         models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", name: "DeepSeek Flash", description: "", vision: true, thinking: true, context1m: false, effort: ["low", "high", "max"], effortDefault: "max", badge: "" }] },
-      { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none",
+      { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none", effort: ["low", "medium", "high", "xhigh", "max"],
         models: [{ id: "gw-model", alias: "claude-gw-model", name: "gw-model", description: "", vision: false, thinking: false, webSearch: false, context1m: false, effortDefault: "", badge: "" }] }
     ] };
   window.__cmWrites = [];
@@ -766,7 +766,8 @@ async function modelsPanel(modelsItem) {
      "a locked provider offers neither Add a model nor remove");
   const row = cards[0].querySelector(".cdbx-models-list .cdbx-row");
   ok(!!row && /in the picker as claude-deepseek-flash/.test(row.querySelector(".cdbx-note").textContent) &&
-     /effort low\/high\/max, default max/.test(row.querySelector(".cdbx-note").textContent), "the model row states its alias, offered levels and default: " + row.querySelector(".cdbx-note").textContent);
+     /default effort max/.test(row.querySelector(".cdbx-note").textContent), "the model row states its alias and default effort: " + row.querySelector(".cdbx-note").textContent);
+  ok(/effort levels low\/high\/max/.test(cards[0].querySelector(".cdbx-state").textContent), "the provider card states its effort levels");
 
   // Add a model: the form's fields reach the bridge as typed.
   cards[0].querySelector(".cdbx-models-add").click();
@@ -777,31 +778,18 @@ async function modelsPanel(modelsItem) {
     const inputs = form.querySelectorAll("input.cdbx-input");
     inputs[0].value = "deepseek-pro";
     inputs[1].value = "DeepSeek Pro";
-    // Effort levels: untick medium and xhigh; the default select follows.
-    const levels = form.querySelectorAll(".cdbx-models-level input[type=checkbox]");
-    ok(levels.length === 5 && Array.from(levels).every((c) => c.checked), "a new model offers all five levels");
-    // detect asks the provider and ticks what it accepted.
-    const detect = Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "detect");
-    ok(!!detect && !detect.disabled, "detect is offered when the provider has a key");
-    detect.click();
-    await sleep(60);
-    ok(window.__cmWrites.indexOf("probe:deepseek:deepseek-pro") >= 0, "detect probes the typed model id");
-    ok(Array.from(levels).map((c) => c.checked).join(",") === "true,false,false,false,true" && form.querySelector("select").value === "max",
-       "the boxes follow the provider's answer and the default moves to the highest accepted");
-    Array.from(levels).forEach((c) => { c.checked = true; c.dispatchEvent(new Event("change", { bubbles: true })); });
-    levels[1].checked = false; levels[1].dispatchEvent(new Event("change", { bubbles: true }));
-    levels[3].checked = false; levels[3].dispatchEvent(new Event("change", { bubbles: true }));
+    ok(!form.querySelector(".cdbx-models-level"), "a model form has no effort-level boxes - they belong to the provider");
     const effortSel = form.querySelector("select");
     ok(Array.from(effortSel.options).map((o) => o.value).join(",") === "low,high,max" && effortSel.value === "max",
-       "the default select lists only the offered levels and moves to the highest when xhigh goes: " + effortSel.value);
+       "the default select lists the provider's levels, the highest preselected: " + effortSel.value);
     effortSel.value = "high";
     const boxes = form.querySelectorAll(".cdbx-models-field > .cdbx-row-aside > input[type=checkbox]");
     boxes[1].checked = false; // images off
     boxes[2].checked = false; // web search tool off
     Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Add model").click();
     await sleep(60);
-    ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high:false:low/high/max") >= 0,
-       "Add model sends provider id, model id, name, thinking, images, effort default, web search and the offered levels: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high:false") >= 0,
+       "Add model sends provider id, model id, name, thinking, images, effort default and web search: " + JSON.stringify(window.__cmWrites));
   }
 
   // Add a provider: a button opens the form; the preset prefills, the key
@@ -816,17 +804,21 @@ async function modelsPanel(modelsItem) {
     preset.value = "deepseek";
     preset.dispatchEvent(new Event("change", { bubbles: true }));
     const f = addForm.querySelectorAll("input.cdbx-input");
-    ok(f[0].value === "deepseek" && f[1].value === "https://api.deepseek.com/anthropic" && f.length === 3,
-       "the preset prefills id and base URL; the form has no other field than the key");
+    ok(f[0].value === "deepseek" && f[1].value === "https://api.deepseek.com/anthropic" && f[3].value === "https://api.deepseek.com/v1/models" && f.length === 4,
+       "the preset prefills id, base URL and models URL");
+    const plv = addForm.querySelectorAll(".cdbx-models-level input[type=checkbox]");
+    ok(plv.length === 5 && Array.from(plv).map((c) => c.checked).join(",") === "true,false,true,false,true",
+       "and ticks the effort levels it knows (low/high/max)");
+    const pdetect = Array.from(addForm.querySelectorAll("button")).find((b) => b.textContent === "detect");
+    ok(!!pdetect && pdetect.disabled, "detect waits for the provider to exist with a key and a model");
     ok(f[2].type === "password" && f[2].value === "", "the key field is a password field and starts empty");
     f[0].value = "ds2";
     f[2].value = "sk-secret-123456";
     Array.from(addForm.querySelectorAll("button")).find((b) => b.textContent === "Add provider").click();
     await sleep(80);
-    ok(window.__cmWrites.some((w) => w === "provider-set:ds2:https://api.deepseek.com/anthropic:key"),
-       "Add provider sends the id, URL and key: " + JSON.stringify(window.__cmWrites));
-    ok(window.__cmWrites.some((w) => /^model-set:ds2:deepseek-flash:DeepSeek Flash:/.test(w)),
-       "and a preset brings its models along: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.some((w) => w === "provider-set:ds2:https://api.deepseek.com/anthropic:key:deepseek:https://api.deepseek.com/v1/models:low/high/max"),
+       "Add provider sends the id, URL, key, preset, models URL and effort levels: " + JSON.stringify(window.__cmWrites));
+    ok(!window.__cmWrites.some((w) => /^model-set:ds2/.test(w)), "no model is added silently - fetch models is the next step");
     ok(!/sk-secret-123456/.test(panel.textContent), "the key never appears in the panel");
     // By hand (no preset): the provider alone, the card's Add a model is next.
     window.__cmWrites = [];
@@ -837,12 +829,52 @@ async function modelsPanel(modelsItem) {
     g[0].value = "gw2"; g[1].value = "https://gw.example/anthropic";
     Array.from(addForm2.querySelectorAll("button")).find((b) => b.textContent === "Add provider").click();
     await sleep(80);
-    ok(window.__cmWrites.length === 1 && window.__cmWrites[0] === "provider-set:gw2:https://gw.example/anthropic:nokey",
-       "by hand: only the provider is created: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.length === 1 && window.__cmWrites[0] === "provider-set:gw2:https://gw.example/anthropic:nokey:::low/medium/high/xhigh/max",
+       "by hand: only the provider is created, no preset, all five levels: " + JSON.stringify(window.__cmWrites));
+
+  // Edit the existing provider: detect is live there and ticks what the
+  // provider accepted.
+  window.__cmWrites = [];
+  // The panel redraws after every write, so re-query the card.
+  const card0 = panel.querySelectorAll(".cdbx-models-card")[0];
+  Array.from(card0.querySelectorAll(".cdbx-row-aside button")).find((b) => b.textContent === "edit").click();
+  await sleep(30);
+  const editForm = card0.querySelector(".cdbx-models-form");
+  ok(!!editForm, "edit opens the provider form in the card");
+  if (editForm) {
+    const edetect = Array.from(editForm.querySelectorAll("button")).find((b) => b.textContent === "detect");
+    ok(!!edetect && !edetect.disabled, "detect is live on a saved provider with a key and a model");
+    edetect.click();
+    await sleep(60);
+    ok(window.__cmWrites.indexOf("probe:deepseek:") >= 0, "detect probes the provider (its first model)");
+    const elv = editForm.querySelectorAll(".cdbx-models-level input[type=checkbox]");
+    ok(Array.from(elv).map((c) => c.checked).join(",") === "true,false,false,false,true", "the boxes follow the provider's answer");
+    Array.from(editForm.querySelectorAll("button")).find((b) => b.textContent === "cancel").click();
+  }
+
+  // Fetch models: the provider's list as a checklist, added ones disabled,
+  // the picked ones added with the preset's effort levels.
+  window.__cmWrites = [];
+  const cardF = panel.querySelectorAll(".cdbx-models-card")[0];
+  const fetchBtn = Array.from(cardF.querySelectorAll("button")).find((b) => b.textContent === "Fetch models");
+  ok(!!fetchBtn && !fetchBtn.disabled, "Fetch models is offered on a provider with a key");
+  fetchBtn.click();
+  await sleep(60);
+  const fetched = cardF.querySelector(".cdbx-models-fetched");
+  ok(!!fetched && window.__cmWrites.indexOf("list:deepseek") >= 0, "the list is asked from the bridge and shown in the card");
+  if (fetched) {
+    const cbs = fetched.querySelectorAll("input[type=checkbox]");
+    ok(cbs.length === 2 && cbs[0].checked && cbs[0].disabled && !cbs[1].checked, "the already-configured model is ticked and disabled, the other free");
+    cbs[1].checked = true;
+    Array.from(fetched.querySelectorAll("button")).find((b) => b.textContent === "Add selected").click();
+    await sleep(80);
+    ok(window.__cmWrites.some((w) => /^model-set:deepseek:deepseek-v4-pro:/.test(w)),
+       "Add selected creates the ticked model: " + JSON.stringify(window.__cmWrites));
+  }
   }
 
   // Test and remove on the editable provider.
-  const btns = Array.from(cards[0].querySelectorAll(".cdbx-row-aside button"));
+  const btns = Array.from(panel.querySelectorAll(".cdbx-models-card")[0].querySelectorAll(".cdbx-row-aside button"));
   const test = btns.find((b) => b.textContent === "test");
   ok(!!test && !test.disabled, "test is offered on a provider with a key and a model");
   if (test) { test.click(); await sleep(40); ok(window.__cmWrites.indexOf("test:deepseek") >= 0, "test calls the bridge"); }
@@ -1877,10 +1909,11 @@ window.cdbExtra = {
   // provider without a key. Writes are recorded and answered with the same
   // state, which is what the panel redraws from.
   customModelsConfig: function () { return Promise.resolve(window.__cmConfig); },
-  customModelsProviderSet: function (p) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-set:" + p.id + ":" + p.baseUrl + ":" + (p.apiKey ? "key" : "nokey")]); return Promise.resolve(window.__cmConfig); },
+  customModelsProviderSet: function (p) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-set:" + p.id + ":" + p.baseUrl + ":" + (p.apiKey ? "key" : "nokey") + ":" + p.preset + ":" + p.modelsUrl + ":" + (p.effort ? p.effort.join("/") : "-")]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelsList: function (pid) { window.__cmWrites = (window.__cmWrites || []).concat(["list:" + pid]); return Promise.resolve({ ok: true, source: "https://api.deepseek.com/v1/models", models: [{ id: "deepseek-flash", name: "deepseek-flash" }, { id: "deepseek-v4-pro", name: "deepseek-v4-pro" }] }); },
   customModelsWebSearchSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["websearch-set:" + v]); return Promise.resolve(window.__cmConfig); },
   customModelsProviderDelete: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-delete:" + id]); return Promise.resolve(window.__cmConfig); },
-  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch + ":" + (m.effort ? m.effort.join("/") : "-")]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch]); return Promise.resolve(window.__cmConfig); },
   customModelsModelDelete: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["model-delete:" + pid + ":" + mid]); return Promise.resolve(window.__cmConfig); },
   customModelsTest: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["test:" + id]); return Promise.resolve({ ok: true, status: 200, model: "deepseek-flash" }); },
   customModelsEffortProbe: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["probe:" + pid + ":" + mid]); return Promise.resolve({ ok: true, accepted: ["low", "max"], rejected: { medium: "x", high: "x", xhigh: "x" } }); },

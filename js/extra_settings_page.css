@@ -712,7 +712,6 @@
 .cdbx-models-card > .cdbx-row { border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
 .cdbx-models-locked { opacity: 0.8; }
 .cdbx-models-list { margin: 0 8px; }
-.cdbx-models-add { margin: 8px 12px 0; }
 .cdbx-models-add-provider { margin: 10px 0 4px; }
 .cdbx-models-warn { color: color-mix(in srgb, #e0a030 70%, currentColor); }
 .cdbx-models-form {
@@ -727,3 +726,6 @@
 .cdbx-models-files { margin-top: 10px; }
 .cdbx-models-levels { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: flex-end; }
 .cdbx-models-level { font-size: 12px; white-space: nowrap; }
+.cdbx-models-card-actions { padding: 8px 12px 0; }
+.cdbx-models-fetched { margin: 8px 12px; padding: 8px 10px; border: 1px dashed color-mix(in srgb, currentColor 22%, transparent); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+.cdbx-models-fetched .cdbx-models-actions { padding: 6px 0 0; }

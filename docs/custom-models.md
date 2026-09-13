@@ -6,7 +6,7 @@ Community feature: **Settings → Extra → Community Features → Custom models
 
 ## Setup from the app
 
-**Settings → Extra → Models → Add a provider.** Pick the DeepSeek preset (or fill in a provider id and the endpoint's base URL by hand), paste the API key, **Add provider** - the preset brings its models along. **test** sends one token to the provider with the stored key, so a wrong URL or key shows there rather than as a failed session. **Add a model** / **edit** on a card set the model id (the provider's own), the display name, whether it takes images, whether thinking and the effort menu are offered, the default effort, an optional badge. Reload the Code tab (or restart): the picker lists the new entries after the Claude models.
+**Settings → Extra → Models → Add a provider.** Pick a preset (DeepSeek, Kimi, GLM, MiniMax, Qwen, or a gateway) or fill in a provider id and the endpoint's base URL by hand, paste the API key, **Add provider**. A preset knows the endpoint, where the provider lists its models and which effort levels its API accepts - not the models themselves, which age too fast: **Fetch models** on the card asks the provider for its list and you tick the ones to add (it also works for an unknown provider whose `/v1/models` follows the OpenAI shape). **test** sends one token with the stored key, so a wrong URL or key shows there rather than as a failed session; **detect** (in the provider form) asks which effort levels it accepts. **Add a model** / **edit** set the model id, the display name, images, thinking, the web search tool, the default effort, an optional badge. Reload the Code tab (or restart): the picker lists the new entries after the Claude models.
 
 The panel writes the providers and models to `claude-desktop-extra.json` in the profile dir and the key to `custom-models/secrets.json` next to it (0600 in a 0700 directory). The key is write-only: it is never shown again and never reaches the page.
 
@@ -69,6 +69,10 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
       "apiKey": "sk-...",                                // or apiKeyEnv: "DEEPSEEK_API_KEY" (from the
       "apiKeyFile": "~/.config/deepseek.key",            // app's environment), or apiKeyFile (trimmed),
                                                          // or apiKeyStored: true (the panel's secrets file)
+      "preset": "deepseek",                              // set by the panel: which preset's endpoint knowledge applies
+      "modelsUrl": "https://api.deepseek.com/v1/models", // where "Fetch models" asks (optional, found automatically)
+      "effort": ["low", "high", "max"],                  // the effort values this provider's API accepts under the
+                                                         // app's names - every model inherits them (default: all five)
       "headers": { "x-extra": "1" },                     // optional, added to every request
       "effortMap": { "xhigh": "high" },                  // optional, see Effort below
       "models": [
@@ -85,7 +89,7 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
           "webSearch": true,          // false: the provider does not run the web_search tool for it -
                                       // the tool is stripped from its requests, and it is not offered
                                       // as the app-wide web-search model
-          "effort": ["low", "high", "max"],  // levels the picker offers, sent as they are (default: all five)
+          "effort": ["low", "max"],   // file-only override of the provider's levels for this model
           "effortDefault": "max"      // the preselected one (default: xhigh when offered, else the highest)
         }
       ]
@@ -104,7 +108,7 @@ The Claude Code CLI only accepts model ids matching `^claude-\S+$` when the app 
 
 The target is Anthropic-**compatible**, not Anthropic, so the CLI's request is reduced to the documented subset of the Messages API: `model`, `max_tokens`, `stream`, `temperature`, `top_p`, `stop_sequences`, `system` (text blocks), `messages` (text, image, tool_use, tool_result, thinking, native web search), `tools` (name/description/input_schema, plus the server-side web search tool), `tool_choice`, `thinking`, `output_config.effort`. Dropped: `metadata`, `context_management`, `top_k`, every `cache_control`, MCP toolsets, `document` blocks other than plain text (replaced by a one-line placeholder), the `anthropic-beta` headers and the Anthropic OAuth `Authorization` (the provider gets `x-api-key` only). Mid-conversation `system` messages (the CLI's `/effort` and friends) are folded into the next user turn as `[system] …`, and turns are merged to keep the strict user/assistant alternation. `count_tokens` is estimated locally (chars / 4) - the compatible endpoints do not serve it.
 
-**Effort.** The picker's effort menu lists the levels the model offers (`effort`, default all five: low, medium, high, xhigh, max) and sends the chosen one unchanged as `output_config.effort`. Offer only the values the provider's API knows under those names: DeepSeek knows `low`, `high`, `max`, so its preset lists exactly those and the default lands on `max` (the setting its benchmarks ran at). **detect** in the model form asks the provider itself - one token with each level - and ticks what it accepted. Should a provider still refuse a level, the request is retried once without effort and the refusal is logged. `effortMap` (per provider) renames levels on the way out for the rare API that spells them differently; without it, `medium` and `xhigh` are sent as `high` and `max` when they reach a provider that was not given an explicit list. Effort never travels with thinking off (DeepSeek answers 400 to that), and the thinking budget is clamped to 16 000 tokens.
+**Effort.** The picker's effort menu lists the levels the provider accepts (`providers[].effort`, default all five: low, medium, high, xhigh, max - an API convention of the provider, inherited by its models) and sends the chosen one unchanged as `output_config.effort`. DeepSeek knows `low`, `high`, `max`, so its preset sets exactly those and the default lands on `max` (the setting its benchmarks ran at). **detect** in the provider form asks the provider itself - one token with each level to its first model - and ticks what it accepted. Should a provider still refuse a level, the request is retried once without effort and the refusal is logged. `effortMap` (per provider) renames levels on the way out for the rare API that spells them differently; without it, `medium` and `xhigh` are sent as `high` and `max` when they reach a provider that was not given an explicit list. Effort never travels with thinking off (DeepSeek answers 400 to that), and the thinking budget is clamped to 16 000 tokens.
 
 **Switching models mid-session.** A history that carries thinking blocks signed by Claude may be refused by the provider with a 400 mentioning the signature; the request is retried once without those blocks. Other errors are returned to the CLI as they are.
 

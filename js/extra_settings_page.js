@@ -2207,7 +2207,8 @@
       var keyLine = p.keyOk
         ? "API key: " + ({ value: "in the config file", env: "from the environment", file: "from a key file", stored: "stored" })[p.keySource]
         : "API key: MISSING - sessions on these models fail until one is set";
-      main.appendChild(el("div", "cdbx-state" + (p.keyOk ? "" : " cdbx-models-warn"), keyLine));
+      main.appendChild(el("div", "cdbx-state" + (p.keyOk ? "" : " cdbx-models-warn"), keyLine +
+        " - effort levels " + (p.effort || []).join("/")));
       head.appendChild(main);
       var aside = el("div", "cdbx-row-aside");
       var test = el("button", "cdbx-clear", "test");
@@ -2264,7 +2265,7 @@
         rm.appendChild(el("div", "cdbx-id", m.name + (m.name !== m.id ? "  (" + m.id + ")" : "")));
         var traits = [];
         traits.push("in the picker as " + m.alias);
-        traits.push(m.thinking ? "effort " + (m.effort || []).join("/") + ", default " + m.effortDefault : "no thinking");
+        traits.push(m.thinking ? "default effort " + m.effortDefault : "no thinking");
         traits.push(m.vision ? "images" : "no images");
         traits.push(m.webSearch === false ? "no web search tool" : "web search tool");
         if (m.context1m) traits.push("1M twin");
@@ -2294,17 +2295,91 @@
       });
       card.appendChild(list);
       if (!p.locked) {
+        var actions = el("div", "cdbx-models-actions cdbx-models-card-actions");
+        // The provider's own list: tick what to add. Effort levels follow the
+        // preset's knowledge when there is any; detect covers the rest.
+        var fetchBtn = el("button", "cdbx-btn", "Fetch models");
+        fetchBtn.type = "button";
+        fetchBtn.disabled = !p.keyOk;
+        fetchBtn.title = p.keyOk ? "Ask the provider which models it serves" : "Set the API key first";
+        fetchBtn.addEventListener("click", function () {
+          var old = card.querySelector(".cdbx-models-fetched");
+          if (old) old.remove();
+          fetchBtn.disabled = true;
+          fetchBtn.textContent = "Fetching...";
+          api.customModelsModelsList(p.id).then(function (r) {
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = "Fetch models";
+            if (failed(r)) { toast("Could not list models: " + reason(r), true); return; }
+            card.insertBefore(fetchedList(p, r), actions);
+          }, function (err) {
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = "Fetch models";
+            toast("Could not list models: " + (err && err.message ? err.message : String(err)), true);
+          });
+        });
+        actions.appendChild(fetchBtn);
         var add = el("button", "cdbx-btn cdbx-models-add", "Add a model");
         add.type = "button";
         add.addEventListener("click", function () {
           if (card.querySelector(".cdbx-models-form-model-new")) return;
           var f = modelForm(p, null);
           f.classList.add("cdbx-models-form-model-new");
-          card.insertBefore(f, add);
+          card.insertBefore(f, actions);
         });
-        card.appendChild(add);
+        actions.appendChild(add);
+        card.appendChild(actions);
       }
       return card;
+    }
+
+    // The checklist of a provider's fetched models; already-configured ones
+    // are shown ticked and disabled.
+    function fetchedList(p, r) {
+      var box = el("div", "cdbx-models-fetched");
+      box.appendChild(el("div", "cdbx-note", r.models.length + " model" + (r.models.length === 1 ? "" : "s") +
+        " listed by " + r.source + ". Tick the ones to add."));
+      var have = Object.create(null);
+      p.models.forEach(function (m) { have[m.id] = true; });
+      var boxes = [];
+      r.models.forEach(function (m) {
+        var lab = el("label", "cdbx-models-level");
+        var cb = checkbox(!!have[m.id]);
+        cb.disabled = !!have[m.id];
+        cb.value = m.id;
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + m.id + (m.name && m.name !== m.id ? " (" + m.name + ")" : "") + (have[m.id] ? " - added" : "")));
+        box.appendChild(lab);
+        boxes.push({ cb: cb, m: m });
+      });
+      var act = el("div", "cdbx-models-actions");
+      var addSel = el("button", "cdbx-btn", "Add selected");
+      addSel.type = "button";
+      addSel.addEventListener("click", function () {
+        var picked = boxes.filter(function (b) { return b.cb.checked && !b.cb.disabled; }).map(function (b) { return b.m; });
+        if (!picked.length) { toast("Tick at least one model", true); return; }
+        addSel.disabled = true;
+        var chain = Promise.resolve(null);
+        picked.forEach(function (m) {
+          chain = chain.then(function () {
+            return api.customModelsModelSet(p.id, { id: m.id, name: m.name && m.name !== m.id ? m.name : "" });
+          });
+        });
+        chain.then(function (last) {
+          if (refresh(last)) toast(picked.length + " model" + (picked.length === 1 ? "" : "s") + " added to " + p.id);
+          else addSel.disabled = false;
+        }, function (err) {
+          addSel.disabled = false;
+          toast("Could not add: " + (err && err.message ? err.message : String(err)), true);
+        });
+      });
+      act.appendChild(addSel);
+      var close = el("button", "cdbx-clear", "close");
+      close.type = "button";
+      close.addEventListener("click", function () { box.remove(); });
+      act.appendChild(close);
+      box.appendChild(act);
+      return box;
     }
 
     function field(form, label, control, note) {
@@ -2359,14 +2434,63 @@
         "The Anthropic-compatible endpoint; /v1/messages is appended.");
       var key = field(form, "API key", input("password", "", existing && existing.keyOk ? "stored - type to replace" : "API key"),
         "Stored in a 0600 file in this profile, never shown again, sent only to that endpoint.");
+      var modelsUrl = field(form, "Models list URL", input("text", existing ? existing.modelsUrl || "" : "", "optional - found automatically"),
+        "Where the provider lists its models (GET, OpenAI or Anthropic shape). Left empty, fetch models tries " +
+        "the preset's address, then <base URL>/v1/models, <origin>/v1/models and <origin>/models.");
+      // Effort: an API convention of the provider (DeepSeek: low/high/max),
+      // so it is set here and every model of the provider inherits it. The
+      // preset fills it when it knows; detect asks the provider (one token
+      // per level to its first model).
+      var offered = existing && Array.isArray(existing.effort) ? existing.effort.slice() : EFFORT_LEVELS.slice();
+      var levelsBox = el("div", "cdbx-models-levels");
+      var levelBoxes = {};
+      EFFORT_LEVELS.forEach(function (lv) {
+        var lab = el("label", "cdbx-models-level");
+        var cb = checkbox(offered.indexOf(lv) !== -1);
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + lv));
+        levelsBox.appendChild(lab);
+        levelBoxes[lv] = cb;
+      });
+      var detect = el("button", "cdbx-clear", "detect");
+      detect.type = "button";
+      detect.title = "Send one token with each level to this provider's first model and tick the ones it accepts";
+      detect.disabled = !(existing && existing.keyOk && existing.models.length);
+      if (detect.disabled) detect.title = existing ? "Needs the key and at least one model" : "Save the provider and add a model first";
+      detect.addEventListener("click", function () {
+        detect.disabled = true;
+        detect.textContent = "detecting...";
+        api.customModelsEffortProbe(existing.id, "").then(function (r) {
+          detect.disabled = false;
+          detect.textContent = "detect";
+          if (failed(r)) { toast("Could not detect: " + reason(r), true); return; }
+          EFFORT_LEVELS.forEach(function (lv) { levelBoxes[lv].checked = r.accepted.indexOf(lv) !== -1; });
+          var refused = Object.keys(r.rejected || {});
+          toast(existing.id + " accepts " + r.accepted.join(", ") + (refused.length ? " - refused: " + refused.join(", ") : "") + " - Save to apply");
+        }, function (err) {
+          detect.disabled = false;
+          detect.textContent = "detect";
+          toast("Could not detect: " + (err && err.message ? err.message : String(err)), true);
+        });
+      });
+      levelsBox.appendChild(detect);
+      field(form, "Effort levels", levelsBox,
+        "The levels this provider's API accepts under the app's names - the same for all its models. " +
+        "Only those appear in the picker's effort menu, sent as they are. A preset fills it in; detect asks " +
+        "the provider. A level it still refuses is dropped from that request and logged.");
+      var chosenPreset = existing ? existing.preset || "" : "";
       if (preset) {
         preset.addEventListener("change", function () {
           var pr = null;
           st.presets.forEach(function (x) { if (x.id === preset.value) pr = x; });
+          chosenPreset = pr ? pr.id : "";
           if (!pr) return;
           id.value = pr.id;
           url.value = pr.baseUrl;
           key.placeholder = pr.keyHint || "API key";
+          modelsUrl.value = pr.modelsUrl || "";
+          var lv = pr.effort || EFFORT_LEVELS;
+          EFFORT_LEVELS.forEach(function (l) { levelBoxes[l].checked = lv.indexOf(l) !== -1; });
         });
       }
       var actions = el("div", "cdbx-models-actions");
@@ -2374,28 +2498,13 @@
       save.type = "button";
       save.addEventListener("click", function () {
         save.disabled = true;
-        var payload = { id: id.value, baseUrl: url.value, apiKey: key.value };
-        var pr = null;
-        if (preset && preset.value) st.presets.forEach(function (x) { if (x.id === preset.value) pr = x; });
-        // A preset brings its models along on first creation, so a provider
-        // is usable right after one Add click; by hand, the card's "Add a
-        // model" is the next step.
-        var models = [];
-        if (!existing && pr && pr.models) pr.models.forEach(function (m) { models.push(Object.assign({}, m)); });
+        var payload = { id: id.value, baseUrl: url.value, apiKey: key.value, preset: chosenPreset, modelsUrl: modelsUrl.value,
+          effort: EFFORT_LEVELS.filter(function (lv) { return levelBoxes[lv].checked; }) };
         api.customModelsProviderSet(payload).then(function (r) {
           if (failed(r)) { save.disabled = false; toast("Could not save: " + reason(r), true); return; }
-          if (models.length) {
-            var chain = Promise.resolve(r);
-            models.forEach(function (m) {
-              chain = chain.then(function () { return api.customModelsModelSet(payload.id.trim(), m); });
-            });
-            return chain.then(function (last) {
-              refresh(last);
-              toast("Provider " + payload.id.trim() + " added with " + models.length + " model" + (models.length === 1 ? "" : "s"));
-            });
-          }
           refresh(r);
-          toast(existing ? "Provider " + existing.id + " saved" : "Provider " + payload.id.trim() + " added - now add a model to it");
+          toast(existing ? "Provider " + existing.id + " saved"
+            : "Provider " + payload.id.trim() + " added - fetch models on its card, or add one by hand");
         }, function (err) {
           save.disabled = false;
           toast("Could not save: " + (err && err.message ? err.message : String(err)), true);
@@ -2422,68 +2531,18 @@
         "Optional line under the name. Anthropic's own entries have none.");
       var thinking = field(form, "Thinking", checkbox(existing ? existing.thinking : true),
         "Off: no effort menu, thinking never requested.");
-      // Which of the app's five levels the provider actually distinguishes -
-      // the picker lists only those, and sends them unchanged. The default
-      // is chosen among the offered ones.
-      var offered = existing && Array.isArray(existing.effort) ? existing.effort.slice() : EFFORT_LEVELS.slice();
-      var levelsBox = el("div", "cdbx-models-levels");
-      var levelBoxes = {};
-      EFFORT_LEVELS.forEach(function (lv) {
-        var lab = el("label", "cdbx-models-level");
-        var cb = checkbox(offered.indexOf(lv) !== -1);
-        lab.appendChild(cb);
-        lab.appendChild(document.createTextNode(" " + lv));
-        levelsBox.appendChild(lab);
-        levelBoxes[lv] = cb;
-      });
-      // "detect": one token per level with the provider's key; the boxes
-      // follow what it accepted.
-      var detect = el("button", "cdbx-clear", "detect");
-      detect.type = "button";
-      detect.title = "Send one token with each level and tick the ones the provider accepts (five minimal requests)";
-      detect.disabled = !(p.keyOk);
-      detect.addEventListener("click", function () {
-        var mid = id.value.trim();
-        if (!mid) { toast("Type the model id first", true); return; }
-        detect.disabled = true;
-        detect.textContent = "detecting...";
-        api.customModelsEffortProbe(p.id, mid).then(function (r) {
-          detect.disabled = false;
-          detect.textContent = "detect";
-          if (failed(r)) { toast("Could not detect: " + reason(r), true); return; }
-          EFFORT_LEVELS.forEach(function (lv) { levelBoxes[lv].checked = r.accepted.indexOf(lv) !== -1; });
-          refillEffort();
-          var refused = Object.keys(r.rejected || {});
-          toast(mid + " accepts " + r.accepted.join(", ") + (refused.length ? " - refused: " + refused.join(", ") : ""));
-        }, function (err) {
-          detect.disabled = false;
-          detect.textContent = "detect";
-          toast("Could not detect: " + (err && err.message ? err.message : String(err)), true);
-        });
-      });
-      levelsBox.appendChild(detect);
-      field(form, "Effort levels offered", levelsBox,
-        "Tick the levels the provider's API accepts under these names (DeepSeek: low, high, max), or " +
-        "let detect ask it. Only those appear in the picker's effort menu, sent as they are; a level " +
-        "the provider still refuses is dropped from that request and logged.");
+      // The provider's levels; the default is chosen among them.
+      var avail = Array.isArray(p.effort) && p.effort.length ? p.effort : EFFORT_LEVELS;
       var effort = el("select", "cdbx-select");
-      function refillEffort() {
-        var cur = effort.value;
-        clear(effort);
-        var avail = EFFORT_LEVELS.filter(function (lv) { return levelBoxes[lv].checked; });
-        avail.forEach(function (lv) {
-          var o = el("option", "", lv);
-          o.value = lv;
-          effort.appendChild(o);
-        });
-        var want = existing && existing.effortDefault ? existing.effortDefault : "xhigh";
-        if (avail.indexOf(cur) !== -1) want = cur;
-        if (avail.indexOf(want) === -1) want = avail.indexOf("xhigh") !== -1 ? "xhigh" : avail[avail.length - 1];
-        effort.value = want || "";
-      }
-      EFFORT_LEVELS.forEach(function (lv) { levelBoxes[lv].addEventListener("change", refillEffort); });
-      refillEffort();
-      field(form, "Default effort", effort, "The level the picker preselects, among those offered.");
+      avail.forEach(function (lv) {
+        var o = el("option", "", lv);
+        o.value = lv;
+        effort.appendChild(o);
+      });
+      var want = existing && existing.effortDefault ? existing.effortDefault : "xhigh";
+      if (avail.indexOf(want) === -1) want = avail.indexOf("xhigh") !== -1 ? "xhigh" : avail[avail.length - 1];
+      effort.value = want;
+      field(form, "Default effort", effort, "The level the picker preselects, among the provider's levels (" + avail.join(", ") + ").");
       var vision = field(form, "Images", checkbox(existing ? existing.vision : true),
         "Off: images are replaced by a placeholder line before the request leaves.");
       var webSearch = field(form, "Web search tool", checkbox(existing ? existing.webSearch !== false : true),
@@ -2500,8 +2559,7 @@
         save.disabled = true;
         var payload = { id: id.value, name: name.value, description: desc.value, badge: badge.value,
           thinking: thinking.checked, vision: vision.checked, webSearch: webSearch.checked,
-          context1m: context1m.checked, effortDefault: effort.value,
-          effort: EFFORT_LEVELS.filter(function (lv) { return levelBoxes[lv].checked; }) };
+          context1m: context1m.checked, effortDefault: effort.value };
         call("customModelsModelSet", p.id, payload).then(function (okd) {
           if (!okd) save.disabled = false;
           else toast(existing ? "Model " + existing.id + " saved" : "Model " + payload.id.trim() + " added to " + p.id);
