@@ -720,7 +720,9 @@
   border: 1px dashed color-mix(in srgb, currentColor 22%, transparent);
   border-radius: 8px;
 }
-.cdbx-models-field .cdbx-row-aside { min-width: 280px; }
+/* A fixed aside: a select with long option labels would otherwise grow to
+   its content and squeeze the label column to a few characters. */
+.cdbx-models-field .cdbx-row-aside { flex: 0 0 320px; min-width: 0; }
 .cdbx-models-field .cdbx-input, .cdbx-models-field .cdbx-select { width: 100%; max-width: 100%; }
 .cdbx-models-actions { display: flex; gap: 10px; align-items: center; padding: 6px 12px 0; }
 .cdbx-models-files { margin-top: 10px; }
@@ -733,3 +735,5 @@
 .cdbx-models-testline { margin-top: 4px; }
 .cdbx-models-reload { margin-left: 8px; }
 .cdbx-models-fetched { max-height: 360px; overflow-y: auto; }
+.cdbx-models-field .cdbx-models-agent-prompt { width: 100%; max-width: 100%; min-height: 72px; }
+.cdbx-models-announce { margin-top: 6px; padding: 6px 8px; border-left: 2px solid color-mix(in srgb, currentColor 22%, transparent); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; white-space: pre-wrap; }

@@ -29,11 +29,22 @@
 #      bundle (`[LAM]`, the Cowork-local session, and a one-shot inference
 #      helper) are deliberately not touched - verified 2026-09-13 by
 #      instrumenting all three: only this one runs for a Code-tab session.
+#   C. Route two fields of the session's `initialize` control request (the
+#      one the app sends the CLI when a Code session opens: `{subtype:
+#      "initialize",hooks,...,appendSystemPrompt:this.initConfig?.
+#      appendSystemPrompt,...,agents:this.initConfig?.agents,...}`, in a
+#      code-split chunk) through `agents()` / `appendSystemPrompt()` of the
+#      main module. Those are the Agent SDK's programmatic sub-agent
+#      definitions and system-prompt suffix: one sub-agent type per custom
+#      model and one line that tells Claude the models exist. Each function
+#      returns its input untouched when the feature is off.
 #
 # Break risk: VERY LOW for A (stable "use strict"; anchor). LOW for B - two
 # literal anchors with an exact-count check; if upstream reshapes that object
 # the build fails loud here. To find it again: rg 'sessionEnv:' across
 # index*.js - the base-config builder is the one spreading an oauthToken env.
+# LOW for C - two literal anchors, each expected exactly once across the
+# concatenated bundle; to find them again: rg 'subtype:"initialize"'.
 
 import std/[os, strutils]
 import regex
@@ -56,7 +67,20 @@ let envEndStateRe =
 proc envEndStateCount(s: string): int =
   s.findAll(envEndStateRe).len
 
-const EXPECTED_PATCHES = 2  # A, B
+# C. The two initialize-request fields, as the minifier spells them.
+const INIT_SITES = [
+  ("appendSystemPrompt:this.initConfig?.appendSystemPrompt",
+   "appendSystemPrompt:((globalThis.__cdbCustomModels&&globalThis.__cdbCustomModels.appendSystemPrompt)||function(x){return x})(this.initConfig?.appendSystemPrompt)"),
+  ("agents:this.initConfig?.agents",
+   "agents:((globalThis.__cdbCustomModels&&globalThis.__cdbCustomModels.agents)||function(x){return x})(this.initConfig?.agents)")
+]
+
+proc initSitesDone(s: string): int =
+  ## How many of the C sites carry our end-state (0, 1 or 2).
+  for site in INIT_SITES:
+    if site[1] in s: inc result
+
+const EXPECTED_PATCHES = 3  # A, B, C
 
 proc escapeJs(s: string): string =
   result = s
@@ -117,6 +141,34 @@ proc apply*(input: string): string =
       echo "  [OK] custom models: cliEnv() spliced into the Code session env (1 match)"
       inc patchesApplied
 
+  # C. Sub-agent definitions and the system-prompt suffix of the initialize
+  # request. Both sites or nothing: half a patch would list the types in the
+  # system prompt without defining them, or the reverse.
+  let done = initSitesDone(result)
+  if done == INIT_SITES.len:
+    echo "  [OK] custom models: initialize request already routed (idempotent)"
+    inc patchesApplied
+  elif done > 0:
+    echo "  [FAIL] custom models: " & $done & "/" & $INIT_SITES.len & " initialize sites already patched - re-audit"
+  else:
+    var siteOk = true
+    for site in INIT_SITES:
+      let n = result.count(site[0])
+      if n != 1:
+        echo "  [FAIL] custom models: expected exactly 1 initialize site `" & site[0] & "`, found " & $n &
+          " - the session initialize request moved; re-audit sub-patch C"
+        siteOk = false
+    if siteOk:
+      var patched = result
+      for site in INIT_SITES:
+        patched = patched.replace(site[0], site[1])
+      if initSitesDone(patched) != INIT_SITES.len:
+        echo "  [FAIL] custom models: initialize sites missing after replacement"
+      else:
+        result = patched
+        echo "  [OK] custom models: agents() and appendSystemPrompt() routed through the initialize request (2 sites)"
+        inc patchesApplied
+
   if patchesApplied < EXPECTED_PATCHES:
     echo "  [FAIL] Only " & $patchesApplied & "/" & $EXPECTED_PATCHES & " patches applied"
     quit(1)
@@ -137,7 +189,7 @@ when isMainModule:
     writeFile(filePath, output)
     echo "  [PASS] custom models applied"
   else:
-    if MARKER notin output or envEndStateCount(output) != 1:
+    if MARKER notin output or envEndStateCount(output) != 1 or initSitesDone(output) != INIT_SITES.len:
       echo "  [FAIL] No changes made and injection is absent"
       quit(1)
     echo "  [OK] Already applied (no changes needed)"

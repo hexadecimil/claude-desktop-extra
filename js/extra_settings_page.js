@@ -2185,6 +2185,82 @@
       wsRow.appendChild(wsAside);
       host.appendChild(wsRow);
 
+      // --- sub-agents ---------------------------------------------------------
+      // Each model is also a sub-agent type Claude launches by name (its row
+      // says which; the model form edits it). Two app-wide choices here: the
+      // model of the sub-agents that name none, and the system-prompt line.
+      // Both are handed to the CLI when a session opens, unlike the routing.
+      var hs = el("div", "cdbx-sec-h");
+      hs.appendChild(el("span", "cdbx-sec-t", "Sub-agents"));
+      host.appendChild(hs);
+      var saRow = el("div", "cdbx-row");
+      var saMain = el("div", "cdbx-row-main");
+      saMain.appendChild(el("div", "cdbx-id", "Default sub-agent model"));
+      saMain.appendChild(el("div", "cdbx-note",
+        "Every model below is a sub-agent type Claude can launch by name. This picks, in addition, the model " +
+        "of the sub-agents whose definition names none - Claude Code's own general-purpose and Plan types, a " +
+        "workflow's agent() without a model, an agent file without model:. The default is the CLI's: the " +
+        "session's model. Explore is pinned by Claude Code to the session's model and keeps it; sub-agents " +
+        "that name their own model are unaffected. Read when a session opens."));
+      saRow.appendChild(saMain);
+      var saAside = el("div", "cdbx-row-aside");
+      var saSel = el("select", "cdbx-select cdbx-models-subagent");
+      var saNone = el("option", "", "Claude Code's default (the session's model)");
+      saNone.value = "";
+      saSel.appendChild(saNone);
+      (st.providers || []).forEach(function (p) {
+        p.models.forEach(function (m) {
+          var o = el("option", "", p.id + " / " + m.name);
+          o.value = m.alias;
+          saSel.appendChild(o);
+        });
+      });
+      var saCur = (st.subagentModel || "").replace(/\[1m\]$/, "");
+      saSel.value = saCur;
+      if (saSel.value !== saCur) saSel.value = "";
+      saSel.disabled = !!st.subagentModelLocked;
+      if (st.subagentModelLocked) saSel.title = "Set in claude-desktop-extra.jsonc - edit that file to change it";
+      saSel.addEventListener("change", function () {
+        saSel.disabled = true;
+        call("customModelsSubagentSet", saSel.value).then(function (okd) {
+          if (okd) toast(saSel.value ? "New sessions run unnamed sub-agents on " + saSel.options[saSel.selectedIndex].textContent
+            : "Unnamed sub-agents back on Claude Code's default");
+          else saSel.disabled = false;
+        });
+      });
+      saAside.appendChild(saSel);
+      saRow.appendChild(saAside);
+      host.appendChild(saRow);
+
+      var anRow = el("div", "cdbx-row");
+      var anMain = el("div", "cdbx-row-main");
+      anMain.appendChild(el("div", "cdbx-id", "Tell Claude about custom models"));
+      anMain.appendChild(el("div", "cdbx-note",
+        "Adds one line to the system prompt of every new session: the ids, the sub-agent types and how to use " +
+        "them in the Agent tool and in workflows. Without it Claude only knows what your CLAUDE.md says."));
+      if (st.announce && st.announceText) {
+        var anText = el("div", "cdbx-note cdbx-models-announce", st.announceText);
+        anMain.appendChild(anText);
+      }
+      anRow.appendChild(anMain);
+      var anAside = el("div", "cdbx-row-aside");
+      var anBox = el("input", "cdbx-models-announce-box");
+      anBox.type = "checkbox";
+      anBox.checked = st.announce !== false;
+      anBox.disabled = !!st.announceLocked;
+      if (st.announceLocked) anBox.title = "Set in claude-desktop-extra.jsonc - edit that file to change it";
+      anBox.addEventListener("change", function () {
+        anBox.disabled = true;
+        var want = anBox.checked;
+        call("customModelsAnnounceSet", want).then(function (okd) {
+          if (okd) toast(want ? "New sessions are told about the custom models" : "New sessions are not told - CLAUDE.md is on its own");
+          else { anBox.disabled = false; anBox.checked = !want; }
+        });
+      });
+      anAside.appendChild(anBox);
+      anRow.appendChild(anAside);
+      host.appendChild(anRow);
+
       // --- providers ----------------------------------------------------------
       var h = el("div", "cdbx-sec-h");
       h.appendChild(el("span", "cdbx-sec-t", "Providers"));
@@ -2211,7 +2287,9 @@
         " (0600). A provider in " + (st.paths && st.paths.jsonc) + " is shown locked - edit that file to change it. " +
         "Routing changes - a key, a model, a provider - reach open sessions at once (" + (st.paths && st.paths.routes) +
         ", 0600, re-read by every session). New models show in the picker after the Code tab reloads - the button " +
-        "above does it. Only a session opened before your very first provider existed needs the app restarted.");
+        "above does it. Sub-agent types, the default sub-agent model and the system-prompt line are handed to " +
+        "each session as it opens: sessions already open keep what they got. Only a session opened before your " +
+        "very first provider existed needs the app restarted.");
       host.appendChild(files);
     }
 
@@ -2303,6 +2381,7 @@
         traits.push(m.thinking ? "default effort " + m.effortDefault : "no thinking");
         traits.push(m.vision ? "images" : "no images");
         traits.push(m.webSearch === false ? "no web search tool" : "web search tool");
+        traits.push(m.agent === false ? "no sub-agent type" : "sub-agent type " + (m.agentName || "?"));
         if (m.badge) traits.push("badge \"" + m.badge + "\"");
         rm.appendChild(el("div", "cdbx-note", traits.join(" - ")));
         row.appendChild(rm);
@@ -2625,6 +2704,24 @@
         (p.preset ? " Preset default: " + inheritedContext + "." : ""));
       var badge = field(form, "Badge", input("text", existing ? existing.badge : "", "optional, e.g. beta"),
         "Optional neutral badge next to the name.");
+      // The sub-agent type: handed to the CLI with every new session, so
+      // Claude launches this model by name. The texts default to generated
+      // ones; the description is what Claude reads to decide when to use it.
+      var defaults = existing && existing.agentDefaults ? existing.agentDefaults : { name: "", description: "", prompt: "" };
+      var agent = field(form, "Sub-agent type", checkbox(existing ? existing.agent !== false : true),
+        "Expose the model as a sub-agent type Claude can launch by name (Agent tool subagent_type, workflow agentType). " +
+        "Read when a session opens.");
+      var agentName = field(form, "Sub-agent name", input("text", existing ? existing.agentName && existing.agentName !== defaults.name ? existing.agentName : "" : "", defaults.name || "generated from the display name"),
+        "Lowercase letters, digits and - (40 max). Empty: generated from the display name.");
+      var agentDesc = field(form, "Sub-agent description", input("text", existing ? existing.agentDescription : "", "generated"),
+        "What Claude reads to decide when to launch it - a role and its limits, in your words. Empty: a generic line." +
+        (defaults.description ? " Generated: \"" + defaults.description + "\"" : ""));
+      var agentPrompt = el("textarea", "cdbx-area cdbx-models-agent-prompt");
+      agentPrompt.value = existing ? existing.agentPrompt || "" : "";
+      agentPrompt.placeholder = "generated";
+      agentPrompt.spellcheck = false;
+      field(form, "Sub-agent prompt", agentPrompt,
+        "Its system prompt. Empty: a generic one." + (defaults.prompt ? " Generated: \"" + defaults.prompt + "\"" : ""));
       var actions = el("div", "cdbx-models-actions");
       var save = el("button", "cdbx-btn", existing ? "Save" : "Add model");
       save.type = "button";
@@ -2632,7 +2729,8 @@
         save.disabled = true;
         var payload = { id: id.value, name: name.value, description: desc.value, badge: badge.value,
           thinking: thinking.checked, vision: vision.checked, webSearch: webSearch.checked,
-          context: context.value, effortDefault: effort.value };
+          context: context.value, effortDefault: effort.value,
+          agent: agent.checked, agentName: agentName.value, agentDescription: agentDesc.value, agentPrompt: agentPrompt.value };
         call("customModelsModelSet", p.id, payload).then(function (okd) {
           if (!okd) save.disabled = false;
           else toast(existing ? "Model " + existing.id + " saved" : "Model " + payload.id.trim() + " added to " + p.id);

@@ -150,6 +150,14 @@
     customModelsWebSearchSet: function (value) {
       return ipcRenderer.invoke("cdb-cm:websearch-set", String(value || ""));
     },
+    // The default sub-agent model ("" = the CLI's own) and the system-prompt
+    // line switch - both read when a session opens.
+    customModelsSubagentSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:subagent-set", String(value || ""));
+    },
+    customModelsAnnounceSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:announce-set", value === true);
+    },
     customModelsProviderDelete: function (id) {
       return ipcRenderer.invoke("cdb-cm:provider-delete", String(id || ""));
     },
@@ -157,7 +165,11 @@
       return ipcRenderer.invoke("cdb-cm:model-set", String(providerId || ""), model && typeof model === "object" ? {
         id: String(model.id || ""), name: String(model.name || ""), description: String(model.description || ""),
         badge: String(model.badge || ""), thinking: model.thinking !== false, vision: model.vision !== false,
-        webSearch: model.webSearch !== false, context: String(model.context || ""), effortDefault: String(model.effortDefault || "")
+        webSearch: model.webSearch !== false, context: String(model.context || ""), effortDefault: String(model.effortDefault || ""),
+        // The model's sub-agent type: on unless unticked; the three texts
+        // are optional and empty means the generated one.
+        agent: model.agent !== false, agentName: String(model.agentName || ""),
+        agentDescription: String(model.agentDescription || ""), agentPrompt: String(model.agentPrompt || "")
       } : {});
     },
     customModelsModelDelete: function (providerId, modelId) {

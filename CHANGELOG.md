@@ -44,6 +44,17 @@ login and every Claude model stay as they are, unlike the exclusive 3P mode.
   refreshes it (closing the settings dialog first). Only a session opened before the very first provider
   existed needs the app restarted. `CDB_CUSTOM_MODELS_DEBUG=1` now reaches the CLI too: `custom-models.log`
   then traces the requests left alone (`passthrough <url> model=<id> (<reason>)`), not only the routed ones.
+- Sub-agents (2026-09-14): every custom model is also a **sub-agent type** Claude launches by name -
+  `Agent(subagent_type: "deepseek-flash")`, `agent(prompt, {agentType: "deepseek-flash"})` in a workflow -
+  handed to the CLI with each session's `initialize` request the way the Agent SDK's `agents` option is, so
+  nothing is written under `~/.claude/agents/`. The name is generated from the display name; the model form
+  edits it, the description (what Claude reads to decide when to use it) and the system prompt, or unticks the
+  type. Two app-wide choices next to it: a **default sub-agent model** (`CLAUDE_CODE_SUBAGENT_MODEL`, the model
+  of the sub-agents whose definition names none - general-purpose and Plan included, not Explore, which the
+  CLI pins to the session's model) and **Tell Claude about custom
+  models**, one system-prompt line per new session with the ids, the types and how to launch them - the Agent
+  tool's `model` parameter is an enum of Anthropic tiers validated inside the CLI and cannot name ours, which
+  the line says. All three are read when a session opens; open sessions keep what they got.
 - Docs: `docs/custom-models.md`. Tests: `test-custom-models-main.mjs`, `test-custom-models-preload.mjs`,
   `test-extra-settings-bridge.mjs`.
 

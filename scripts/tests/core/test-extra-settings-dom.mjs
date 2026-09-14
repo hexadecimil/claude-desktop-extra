@@ -724,6 +724,8 @@ async function featuresPanel(featuresItem) {
 async function modelsPanel(modelsItem) {
   window.__cmConfig = { ok: true, enabled: true, configured: true, lockedByJsonc: false, source: "default",
     surfaces: ["ccd", "code"], models: 2, webSearch: "claude-deepseek-flash", webSearchLocked: false,
+    subagentModel: "", subagentModelLocked: false, announce: true, announceLocked: false,
+    announceText: "Custom models available in this app (claude-desktop-extra), served by the user's own providers: claude-deepseek-flash[1m] (DeepSeek Flash, deepseek; sub-agent type deepseek-flash).",
     anthropicModels: [{ id: "claude-opus-5", name: "Opus 5" }, { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }],
     presets: [{ id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", keyHint: "sk-...",
       modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m" }],
@@ -731,9 +733,10 @@ async function modelsPanel(modelsItem) {
       secrets: "/home/u/.config/Claude/custom-models/secrets.json", routes: "/home/u/.config/Claude/custom-models/routes.json" },
     providers: [
       { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored", preset: "deepseek", modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m",
-        models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", listedAs: ["claude-deepseek-flash[1m]"], name: "DeepSeek Flash", description: "", vision: true, thinking: true, context: "1m", effort: ["low", "high", "max"], effortDefault: "max", badge: "" }] },
+        models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", listedAs: ["claude-deepseek-flash[1m]"], name: "DeepSeek Flash", description: "", vision: true, thinking: true, context: "1m", effort: ["low", "high", "max"], effortDefault: "max", badge: "",
+          agent: true, agentName: "deepseek-flash", agentDescription: "", agentPrompt: "", agentDefaults: { name: "deepseek-flash", description: "Sub-agent running on DeepSeek Flash via deepseek, a custom model outside Anthropic's.", prompt: "You are a sub-agent running on DeepSeek Flash." } }] },
       { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none", effort: ["low", "medium", "high", "xhigh", "max"], context: "200k",
-        models: [{ id: "gw-model", alias: "claude-gw-model", listedAs: ["claude-gw-model"], name: "gw-model", description: "", vision: false, thinking: false, webSearch: false, context: "200k", effortDefault: "", badge: "" }] }
+        models: [{ id: "gw-model", alias: "claude-gw-model", listedAs: ["claude-gw-model"], name: "gw-model", description: "", vision: false, thinking: false, webSearch: false, context: "200k", effortDefault: "", badge: "", agent: false, agentName: "", agentDescription: "", agentPrompt: "" }] }
     ] };
   window.__cmWrites = [];
   modelsItem.click();
@@ -779,6 +782,31 @@ async function modelsPanel(modelsItem) {
   await sleep(40);
   ok(window.__cmWrites.indexOf("websearch-set:") >= 0, "picking Anthropic writes an empty value");
   window.__cmWrites = [];
+  // The Sub-agents section: the default sub-agent model and the announce line.
+  const sa = panel.querySelector("select.cdbx-models-subagent");
+  ok(!!sa && sa.value === "" && sa.options.length === 3 && /Claude Code's default/.test(sa.options[0].textContent) &&
+     sa.options[1].value === "claude-deepseek-flash" && sa.options[2].textContent === "gw / gw-model",
+     "the default sub-agent model select: the CLI's default, then every custom model (" + (sa && sa.options.length) + ")");
+  ok(!!sa && /general-purpose and Plan/.test(sa.closest(".cdbx-row").querySelector(".cdbx-note").textContent) &&
+     /Explore is pinned/.test(sa.closest(".cdbx-row").querySelector(".cdbx-note").textContent),
+     "its note names the built-in types it affects, and the one it does not");
+  sa.value = "claude-deepseek-flash";
+  sa.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("subagent-set:claude-deepseek-flash") >= 0, "picking a model writes its alias: " + JSON.stringify(window.__cmWrites));
+  window.__cmWrites = [];
+  const an = panel.querySelector("input.cdbx-models-announce-box");
+  ok(!!an && an.checked && !an.disabled, "Tell Claude about custom models is a ticked checkbox");
+  const anText = panel.querySelector(".cdbx-models-announce");
+  ok(!!anText && /^Custom models available in this app/.test(anText.textContent) && /sub-agent type deepseek-flash/.test(anText.textContent),
+     "and the line new sessions get is shown under it");
+  an.checked = false;
+  an.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("announce-set:false") >= 0, "unticking writes false: " + JSON.stringify(window.__cmWrites));
+  window.__cmWrites = [];
+  ok(/handed to each session as it opens/.test(panel.querySelector(".cdbx-models-files").textContent),
+     "the footer says the sub-agent settings apply to sessions opened afterwards");
   ok(cards[1].classList.contains("cdbx-models-locked") && /set in claude-desktop-extra\.jsonc/.test(cards[1].querySelector(".cdbx-id").textContent),
      "the .jsonc provider is drawn locked and says so");
   ok(/MISSING/.test(cards[1].querySelector(".cdbx-state").textContent), "a provider without a key says so");
@@ -787,6 +815,8 @@ async function modelsPanel(modelsItem) {
   const row = cards[0].querySelector(".cdbx-models-list .cdbx-row");
   ok(!!row && /in the picker as claude-deepseek-flash\[1m\] - 1M context/.test(row.querySelector(".cdbx-note").textContent) &&
      /default effort max/.test(row.querySelector(".cdbx-note").textContent), "the model row states the id it is listed under, its context and default effort: " + row.querySelector(".cdbx-note").textContent);
+  ok(/sub-agent type deepseek-flash/.test(row.querySelector(".cdbx-note").textContent), "and its sub-agent type");
+  ok(/no sub-agent type/.test(cards[1].querySelector(".cdbx-models-list .cdbx-row .cdbx-note").textContent), "a model without one says so");
   ok(/in the picker as claude-gw-model - 200k context/.test(cards[1].querySelector(".cdbx-models-list .cdbx-row .cdbx-note").textContent),
      "a 200k model says so");
   ok(/effort levels low\/high\/max/.test(cards[0].querySelector(".cdbx-state").textContent), "the provider card states its effort levels");
@@ -815,10 +845,19 @@ async function modelsPanel(modelsItem) {
     const boxes = form.querySelectorAll(".cdbx-models-field > .cdbx-row-aside > input[type=checkbox]");
     boxes[1].checked = false; // images off
     boxes[2].checked = false; // web search tool off
+    ok(boxes.length === 4 && boxes[3].checked, "the form offers the sub-agent type, ticked by default (" + boxes.length + " boxes)");
+    const agentPrompt = form.querySelector("textarea.cdbx-models-agent-prompt");
+    ok(!!agentPrompt && agentPrompt.placeholder === "generated" && inputs.length === 6 && /generated from the display name/.test(inputs[4].placeholder),
+       "with a name, a description and a prompt, the generated ones as placeholders");
+    inputs[4].value = "Pro-Fanout";
+    inputs[5].value = "Fan-out only, never a judge";
+    agentPrompt.value = "Do the step.";
     Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Add model").click();
     await sleep(60);
     ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high:false:both") >= 0,
        "Add model sends provider id, model id, name, thinking, images, effort default, web search and context: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.indexOf("model-agent:deepseek:deepseek-pro:true:Pro-Fanout:Fan-out only, never a judge:Do the step.") >= 0,
+       "and the sub-agent fields as typed: " + JSON.stringify(window.__cmWrites));
   }
 
   // Add a provider: a button opens the form; the preset prefills, the key
@@ -1986,7 +2025,9 @@ window.cdbExtra = {
   customModelsModelsList: function (pid) { window.__cmWrites = (window.__cmWrites || []).concat(["list:" + pid]); return Promise.resolve(window.__cmModelsList || { ok: true, source: "https://api.deepseek.com/v1/models", models: [{ id: "deepseek-flash", name: "deepseek-flash" }, { id: "deepseek-v4-pro", name: "deepseek-v4-pro" }] }); },
   customModelsWebSearchSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["websearch-set:" + v]); return Promise.resolve(window.__cmConfig); },
   customModelsProviderDelete: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-delete:" + id]); return Promise.resolve(window.__cmConfig); },
-  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch + (m.context ? ":" + m.context : "")]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch + (m.context ? ":" + m.context : "")]); if ("agent" in m) window.__cmWrites.push("model-agent:" + pid + ":" + m.id + ":" + m.agent + ":" + m.agentName + ":" + m.agentDescription + ":" + m.agentPrompt); return Promise.resolve(window.__cmConfig); },
+  customModelsSubagentSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["subagent-set:" + v]); return Promise.resolve(window.__cmConfig); },
+  customModelsAnnounceSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["announce-set:" + v]); return Promise.resolve(window.__cmConfig); },
   customModelsModelDelete: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["model-delete:" + pid + ":" + mid]); return Promise.resolve(window.__cmConfig); },
   customModelsTest: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["test:" + id]); return Promise.resolve({ ok: true, status: 200, model: "deepseek-flash" }); },
   customModelsEffortProbe: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["probe:" + pid + ":" + mid]); return Promise.resolve({ ok: true, accepted: ["low", "max"], rejected: { medium: "x", high: "x", xhigh: "x" } }); },

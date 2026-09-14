@@ -32,6 +32,13 @@
  *     The app's own validator accepts any id in subscription mode; the CLI's
  *     accepts ^claude-\S+$, hence every custom id is exposed as "claude-<id>".
  *
+ *  3. SUB-AGENTS. `agents()` and `appendSystemPrompt()` are routed through
+ *     the session's `initialize` request (sub-patch C): one sub-agent type
+ *     per model, so Claude can launch it by name (Agent tool, workflow
+ *     agentType), and one system-prompt line that tells Claude the ids and
+ *     the types exist. CLAUDE_CODE_SUBAGENT_MODEL, when the user picks a
+ *     default sub-agent model, rides in cliEnv().
+ *
  * SECURITY: the provider key never reaches the page - the bootstrap patch
  * carries names and ids only. The IPC handlers validate the sender ORIGIN
  * (not a substring of the URL) and take only a boolean; nothing page-supplied
@@ -96,6 +103,12 @@
   // claude-haiku-4-5-20251001...): what the app-wide web-search choice may
   // name besides one of ours.
   var ANTHROPIC_ID_RE = /^claude-[a-z0-9][a-z0-9.-]{0,60}$/;
+  // Sub-agent types (see agentDefs): the name Claude launches a model's
+  // sub-agent under - kebab-case, like the CLI's own general-purpose. The
+  // reserved ones are the CLI's built-in types; a generated name that would
+  // shadow one gets the provider id appended.
+  var AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+  var RESERVED_AGENT_NAMES = ["general-purpose", "explore", "plan", "claude", "fork", "statusline-setup", "claude-code-guide"];
 
   var DEBUG = process.env.CDB_CUSTOM_MODELS_DEBUG === "1";
 
@@ -239,6 +252,15 @@
     // is the spelling of the first release, kept as "both".
     if (CONTEXT_MODES.indexOf(raw.context) !== -1) m.context = raw.context;
     else if (raw.context1m === true) m.context = "both";
+    // Its sub-agent type: on unless `agent: false`; an object customises the
+    // name, the description and the prompt (agentDefs fills the rest). The
+    // name is resolved in readConfig, where uniqueness can be checked.
+    m.agent = raw.agent !== false;
+    if (isObj(raw.agent)) {
+      if (typeof raw.agent.name === "string" && raw.agent.name.trim()) m.agentWanted = raw.agent.name.trim().toLowerCase();
+      if (typeof raw.agent.description === "string" && raw.agent.description.trim()) m.agentDescription = raw.agent.description.trim();
+      if (typeof raw.agent.prompt === "string" && raw.agent.prompt.trim()) m.agentPrompt = raw.agent.prompt.trim();
+    }
     return m;
   }
   // The ids a model is listed under, per its context mode - what the picker
@@ -247,6 +269,15 @@
     if (m.context === "1m") return [m.alias + "[1m]"];
     if (m.context === "both") return [m.alias, m.alias + "[1m]"];
     return [m.alias];
+  }
+  // The id a sub-agent (or the sub-agent default) runs the model under: the
+  // 1M twin when the model is listed with one - an agent's job is the long one.
+  function agentModelId(m) {
+    var ids = listedIds(m);
+    return ids[ids.length - 1];
+  }
+  function slug(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "");
   }
 
   function normaliseProvider(raw, idx, locked, secrets) {
@@ -355,9 +386,56 @@
       else warnOnce("ws" + want, "webSearch names " + want + ", which is neither a configured model nor an Anthropic id - web search stays on Anthropic");
     }
 
+    // Sub-agent type names, one per model that has one: the configured name
+    // when valid, else the display name slugged; never a built-in's, never
+    // twice - the provider id, then a counter, break a tie.
+    var usedNames = Object.create(null);
+    usable.forEach(function (p) {
+      p.models.forEach(function (m) {
+        if (!m.agent) return;
+        var want = m.agentWanted || "";
+        if (want && !AGENT_NAME_RE.test(want)) {
+          warnOnce("agname" + m.alias, "model " + m.id + ": agent.name \"" + want + "\" is not lowercase letters, digits and - (max 40) - name generated instead");
+          want = "";
+        }
+        if (!want) want = slug(m.name) || slug(m.id) || "custom-model";
+        if (RESERVED_AGENT_NAMES.indexOf(want) !== -1) want = slug(want + "-" + p.id);
+        var name = want;
+        if (usedNames[name]) name = slug(want + "-" + p.id);
+        for (var n = 2; usedNames[name]; n++) name = slug(want + "-" + n);
+        usedNames[name] = true;
+        m.agentName = name;
+      });
+    });
+
+    // The default sub-agent model (CLAUDE_CODE_SUBAGENT_MODEL): what a
+    // sub-agent whose definition names no model runs on - the CLI's own
+    // general-purpose and Plan included; not Explore, which the CLI pins to
+    // "inherit" (the session's model), and not a type with a model of its own
+    // (checked in the CLI 2.1.266: CLAUDE_CODE_SUBAGENT_MODEL_FORCE would
+    // override those too, ours included - not offered). "" = the CLI's own
+    // default, the session's model. Resolved to the listed id.
+    var samRaw = typeof a.subagentModel === "string" ? a.subagentModel
+      : (typeof b.subagentModel === "string" ? b.subagentModel : "");
+    var samLocked = typeof a.subagentModel === "string";
+    var subagentModel = "";
+    if (samRaw.trim()) {
+      var samWant = samRaw.trim().replace(/\[1m\]$/, "");
+      var samAlias = samWant.indexOf(ID_PREFIX) === 0 ? samWant : ID_PREFIX + samWant;
+      if (seenModel[samAlias]) subagentModel = agentModelId(seenModel[samAlias]);
+      else warnOnce("sam" + samWant, "subagentModel names " + samWant + ", which is not a configured model - sub-agents keep the CLI's default");
+    }
+    // Whether every new session's system prompt gets the one line that tells
+    // Claude these models and sub-agent types exist (announceText).
+    var announce = typeof a.announce === "boolean" ? a.announce
+      : (typeof b.announce === "boolean" ? b.announce : true);
+    var announceLocked = typeof a.announce === "boolean";
+
     return { enabled: enabled, source: source, surfaces: surfaces, providers: usable,
       allProviders: providers, configured: usable.length > 0,
-      webSearch: webSearch, webSearchLocked: wsLocked };
+      webSearch: webSearch, webSearchLocked: wsLocked,
+      subagentModel: subagentModel, subagentModelLocked: samLocked,
+      announce: announce, announceLocked: announceLocked };
   }
   function activeConfig() {
     var c = readConfig();
@@ -904,10 +982,96 @@
       if (rp) env.CDB_CUSTOM_MODELS_ROUTES = rp;
       if (logDir) env.CDB_CUSTOM_MODELS_LOG = _path.join(logDir, LOG_NAME);
       if (DEBUG) env.CDB_CUSTOM_MODELS_DEBUG = "1"; // the preload then logs the passthroughs too
+      // The CLI's own switch for the model of every sub-agent that names none
+      // - honoured with our ids the same way (checked 2026-09-14, CLI 2.1.266).
+      if (cfg.subagentModel) env.CLAUDE_CODE_SUBAGENT_MODEL = cfg.subagentModel;
       return env;
     } catch (e) {
       log("cliEnv: " + (e && e.message ? e.message : String(e)) + " - session left untouched");
       return {};
+    }
+  }
+
+  // ---- sub-agent types and the system-prompt line ---------------------------
+  // The app hands the CLI, in the `initialize` request that opens every
+  // session, the same two fields the Agent SDK exposes: `agents` (programmatic
+  // sub-agent definitions - what a ~/.claude/agents/<name>.md file declares,
+  // without the file) and `appendSystemPrompt`. Sub-patch C of the Nim patch
+  // routes both through here. A definition's `model` takes any id the CLI
+  // accepts on --model, so one type per custom model gives
+  // `Agent(subagent_type: <name>)` and a workflow's `agentType` on that model;
+  // the Agent tool's own `model` parameter stays an enum of Anthropic tiers -
+  // it cannot name ours, which is why the line below says so. Both are read
+  // when the session starts: a model added later reaches the next session.
+  function agentDescription(p, m) {
+    return "Sub-agent running on " + m.name + " via " + p.id + ", a custom model outside Anthropic's. Use it when " +
+      "a task should run on that model: give it a self-contained brief and the output format you expect.";
+  }
+  function agentPrompt(p, m) {
+    return "You are a sub-agent running on " + m.name + ", a custom model served by " + p.id + ". Work only from " +
+      "what your prompt provides; when something is missing, say so instead of guessing. Your final message is " +
+      "returned to the orchestrator as data: follow the requested output format exactly, with nothing outside it.";
+  }
+  function agentDefs(cfg) {
+    var out = {};
+    cfg.providers.forEach(function (p) {
+      p.models.forEach(function (m) {
+        if (!m.agent || !m.agentName) return;
+        out[m.agentName] = {
+          description: m.agentDescription || agentDescription(p, m),
+          prompt: m.agentPrompt || agentPrompt(p, m),
+          model: agentModelId(m)
+        };
+      });
+    });
+    return out;
+  }
+  // `theirs` is whatever the app put in initConfig.agents (nothing, as of
+  // 2026-09-14). The app's own definitions win a name clash; a shape we do
+  // not expect is left alone.
+  function agents(theirs) {
+    try {
+      var cfg = activeConfig();
+      if (!cfg) return theirs;
+      var ours = agentDefs(cfg);
+      if (!Object.keys(ours).length) return theirs;
+      if (theirs === undefined || theirs === null) return ours;
+      if (!isObj(theirs)) return theirs;
+      return Object.assign({}, ours, theirs);
+    } catch (e) {
+      log("agents: " + (e && e.message ? e.message : String(e)) + " - session left untouched");
+      return theirs;
+    }
+  }
+  function announceText(cfg) {
+    var entries = [], types = [];
+    cfg.providers.forEach(function (p) {
+      p.models.forEach(function (m) {
+        entries.push(listedIds(m).join(" and ") + " (" + m.name + ", " + p.id +
+          (m.agent && m.agentName ? "; sub-agent type " + m.agentName : "") + ")");
+        if (m.agent && m.agentName) types.push(m.agentName);
+      });
+    });
+    var text = "Custom models available in this app (claude-desktop-extra), served by the user's own providers: " +
+      entries.join("; ") + ". To run work on one of them" +
+      (types.length ? ", launch its sub-agent type with the Agent tool (subagent_type), or in a workflow script " +
+        "use agent(prompt, {agentType: \"<type>\"}) or agent(prompt, {model: \"<id>\"})"
+        : ", in a workflow script use agent(prompt, {model: \"<id>\"})") +
+      ". These ids are not valid values for the Agent tool's `model` parameter, which only accepts Anthropic tiers.";
+    if (cfg.subagentModel) text += " Sub-agents launched without a model of their own run on " + cfg.subagentModel + ".";
+    return text;
+  }
+  function appendSystemPrompt(theirs) {
+    try {
+      var cfg = activeConfig();
+      if (!cfg || !cfg.announce) return theirs;
+      var text = announceText(cfg);
+      if (typeof theirs === "string") return theirs.trim() ? theirs + "\n\n" + text : text;
+      if (Array.isArray(theirs)) return theirs.concat([text]);
+      return text;
+    } catch (e) {
+      log("appendSystemPrompt: " + (e && e.message ? e.message : String(e)) + " - session left untouched");
+      return theirs;
     }
   }
 
@@ -954,12 +1118,22 @@
         models: p.models.map(function (m) {
           return { id: m.id, alias: m.alias, listedAs: listedIds(m), name: m.name, description: m.description,
             vision: m.vision, thinking: m.thinking, webSearch: m.webSearch, context: m.context || p.context,
-            effort: m.effort || EFFORT_ORDER.slice(), effortDefault: effortDefaultOf(m), badge: m.badge };
+            effort: m.effort || EFFORT_ORDER.slice(), effortDefault: effortDefaultOf(m), badge: m.badge,
+            // Its sub-agent type as it will be handed to the CLI, and what
+            // the form shows as placeholders when nothing is customised.
+            agent: m.agent, agentName: m.agent ? m.agentName || "" : "",
+            agentDescription: m.agentDescription || "", agentPrompt: m.agentPrompt || "",
+            agentDefaults: { name: m.agentName || slug(m.name) || slug(m.id), description: agentDescription(p, m), prompt: agentPrompt(p, m) } };
         })
       };
     });
     out.webSearch = cfg.webSearch;
     out.webSearchLocked = cfg.webSearchLocked;
+    out.subagentModel = cfg.subagentModel;
+    out.subagentModelLocked = cfg.subagentModelLocked;
+    out.announce = cfg.announce;
+    out.announceLocked = cfg.announceLocked;
+    out.announceText = cfg.enabled && cfg.configured && cfg.announce ? announceText(cfg) : "";
     out.anthropicModels = lastAnthropicModels.slice();
     out.paths = { json: pathFor(JSON_NAME), jsonc: pathFor(JSONC_NAME), secrets: secretsPath(), routes: routesPath() };
     out.presets = PRESETS;
@@ -1057,6 +1231,23 @@
     var auto = levels.indexOf("xhigh") !== -1 ? "xhigh" : levels[levels.length - 1];
     if (typeof input.effortDefault === "string" && levels.indexOf(input.effortDefault) !== -1 &&
         input.effortDefault !== auto) out.effortDefault = input.effortDefault;
+    // The sub-agent type: off is written as `agent: false`; on writes only
+    // what differs from the generated name, description and prompt.
+    if (input.agent === false) out.agent = false;
+    else {
+      var ag = {};
+      var agName = cleanString(input.agentName, 40).toLowerCase();
+      if (agName) {
+        if (!AGENT_NAME_RE.test(agName)) return { error: "sub-agent name: lowercase letters, digits and - only (40 max)" };
+        if (RESERVED_AGENT_NAMES.indexOf(agName) !== -1) return { error: "sub-agent name " + agName + " is one of Claude Code's built-in types" };
+        ag.name = agName;
+      }
+      var agDesc = cleanString(input.agentDescription, 600);
+      if (agDesc) ag.description = agDesc;
+      var agPrompt = cleanString(input.agentPrompt, 6000);
+      if (agPrompt) ag.prompt = agPrompt;
+      if (Object.keys(ag).length) out.agent = ag;
+    }
     return { value: out };
   }
   function findJsonProvider(cur, id) {
@@ -1164,6 +1355,17 @@
     if (clash) return { ok: false, error: "model id " + mp.value.id + " is already used by another provider" };
     var known = cfg.allProviders.some(function (p) { return p.id === providerId && !p.locked; });
     if (!known) return { ok: false, error: "provider " + providerId + " is not in " + JSON_NAME + " - add it first" };
+    // A typed sub-agent name must be free: a generated one steps aside on
+    // its own, a typed one would silently lose to the other model's.
+    if (mp.value.agent && mp.value.agent.name) {
+      var taken = null;
+      cfg.providers.forEach(function (p) {
+        p.models.forEach(function (m) {
+          if (m.agent && m.agentName === mp.value.agent.name && !(p.id === providerId && m.id === mp.value.id)) taken = p.id + " / " + m.id;
+        });
+      });
+      if (taken) return { ok: false, error: "sub-agent name " + mp.value.agent.name + " is already used by " + taken };
+    }
     var w = writeJson(function (cur) {
       var i = findJsonProvider(cur, providerId);
       if (i === -1) return;
@@ -1217,6 +1419,41 @@
     }
     var w = writeJson(function (cur) {
       if (value) cur.webSearch = value; else delete cur.webSearch;
+    });
+    if (!w.ok) return w;
+    return detail(readConfig());
+  });
+
+  // The default sub-agent model: "" for the CLI's own default (the session's
+  // model), else the id (or alias) of a configured custom model.
+  _ipc.handle("cdb-cm:subagent-set", function (ev, value) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    value = cleanString(value, 130);
+    var cfg = readConfig();
+    if (cfg.subagentModelLocked) return { ok: false, error: "subagentModel is set in " + JSONC_NAME + " - edit that file to change it" };
+    if (value) {
+      var want = value.replace(/\[1m\]$/, "");
+      var alias = want.indexOf(ID_PREFIX) === 0 ? want : ID_PREFIX + want;
+      var mine = null;
+      cfg.providers.forEach(function (p) { p.models.forEach(function (m) { if (m.alias === alias) mine = m; }); });
+      if (!mine) return { ok: false, error: value + " is not a configured custom model" };
+      value = alias;
+    }
+    var w = writeJson(function (cur) {
+      if (value) cur.subagentModel = value; else delete cur.subagentModel;
+    });
+    if (!w.ok) return w;
+    return detail(readConfig());
+  });
+
+  // Whether new sessions get the system-prompt line (announceText).
+  _ipc.handle("cdb-cm:announce-set", function (ev, value) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    if (typeof value !== "boolean") return { ok: false, error: "announce must be a boolean" };
+    var cfg = readConfig();
+    if (cfg.announceLocked) return { ok: false, error: "announce is set in " + JSONC_NAME + " - edit that file to change it" };
+    var w = writeJson(function (cur) {
+      if (value) delete cur.announce; else cur.announce = false;
     });
     if (!w.ok) return w;
     return detail(readConfig());
@@ -1409,7 +1646,8 @@
   });
 
   globalThis.__cdbCustomModels = { cliEnv: cliEnv, enrichBootstrap: enrichBootstrap, readConfig: readConfig,
-    selectionOutcome: selectionOutcome, rememberServerState: rememberServerState, listedIds: listedIds, syncRoutes: syncRoutes };
+    selectionOutcome: selectionOutcome, rememberServerState: rememberServerState, listedIds: listedIds, syncRoutes: syncRoutes,
+    agents: agents, appendSystemPrompt: appendSystemPrompt };
 
   // The files edited by hand (the .jsonc, a key file's secrets.json) are not
   // written through the panel: watch them so routes.json follows those
@@ -1435,12 +1673,14 @@
 
   setTimeout(function () {
     var c = readConfig();
-    var n = 0;
-    c.providers.forEach(function (p) { n += p.models.length; });
+    var n = 0, types = [];
+    c.providers.forEach(function (p) { n += p.models.length; p.models.forEach(function (m) { if (m.agent && m.agentName) types.push(m.agentName); }); });
     if (c.configured || _fs.existsSync(routesPath() || "")) syncRoutes();
     watchForRoutes();
     log("installed (main); " + (c.configured ? n + " model(s) from " + c.providers.length + " provider(s), " +
-      (c.enabled ? "on" : "off") + " (source: " + c.source + "), surfaces " + c.surfaces.join(",")
+      (c.enabled ? "on" : "off") + " (source: " + c.source + "), surfaces " + c.surfaces.join(",") +
+      (types.length ? ", sub-agent types " + types.join(",") : ", no sub-agent type") +
+      (c.subagentModel ? ", sub-agent default " + c.subagentModel : "") + (c.announce ? "" : ", system-prompt line off")
       : "no customModels.providers configured - feature idle"));
   }, 0);
 })();

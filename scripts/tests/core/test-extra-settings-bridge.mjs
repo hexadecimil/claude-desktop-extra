@@ -66,6 +66,16 @@ const api = exposed.api;
      "the other custom-models methods hit their fixed channels");
   ok(calls[0][1] === "" && calls[2][1] === "gw" && calls[2][2] === "m", "arguments are stringified");
 }
+{
+  calls.length = 0;
+  api.customModelsSubagentSet(undefined); api.customModelsAnnounceSet("yes");
+  api.customModelsModelSet("ds", { id: "m", agent: false, agentName: 12, agentDescription: null, agentPrompt: "p", extra: 1 });
+  ok(calls.map((c) => c[0]).join(" ") === "cdb-cm:subagent-set cdb-cm:announce-set cdb-cm:model-set", "the sub-agent methods hit their fixed channels");
+  ok(calls[0][1] === "" && calls[1][1] === false, "subagent-set stringifies, announce-set is true only for true");
+  const m = calls[2][2];
+  ok(m.agent === false && m.agentName === "12" && m.agentDescription === "" && m.agentPrompt === "p" && !("extra" in m),
+     "model-set forwards the sub-agent fields as strings and a boolean, nothing else");
+}
 ok(typeof api.invoke !== "function" && typeof api.send !== "function", "no generic passthrough to arbitrary channels");
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -804,6 +804,129 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   rmSync(dir, { recursive: true, force: true });
 }
 
+// --- sub-agent types and the system-prompt line ----------------------------------
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-cm-main-"));
+  writeFileSync(join(dir, "claude-desktop-extra.jsonc"), JSON.stringify({ customModels: { providers: [
+    { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "sk-test-1234567890", models: [
+      { id: "deepseek-flash", name: "DeepSeek Flash", context: "1m" },
+      { id: "deepseek-pro", name: "DeepSeek Pro", context: "both", agent: { name: "Bad Name!", description: "Judge-free fan-out on Pro" } },
+      { id: "quiet", agent: false }
+    ] },
+    { id: "gw", baseUrl: "http://127.0.0.1:8787", apiKey: "sk-test-1234567890", models: [
+      { id: "gemini-3.8-flash" },
+      { id: "flash2", name: "DeepSeek Flash" },
+      { id: "x", name: "Explore", agent: { prompt: "Tu es Explore sur X." } }
+    ] }
+  ] } }));
+  const { api, diag } = load(dir);
+  const cfg = api.readConfig();
+  const names = {};
+  cfg.providers.forEach((p) => p.models.forEach((m) => { names[p.id + "/" + m.id] = m.agent ? m.agentName : null; }));
+  ok(names["deepseek/deepseek-flash"] === "deepseek-flash", "a type is named from the display name, slugged: " + names["deepseek/deepseek-flash"]);
+  ok(names["gw/gemini-3.8-flash"] === "gemini-3-8-flash", "dots and the like become dashes: " + names["gw/gemini-3.8-flash"]);
+  ok(names["deepseek/deepseek-pro"] === "deepseek-pro", "an invalid configured name falls back to the generated one: " + names["deepseek/deepseek-pro"]);
+  await new Promise((r) => setTimeout(r, 5));
+  ok(diag.some((l) => /agent\.name "bad name!"/.test(l)), "and says so once");
+  ok(names["deepseek/quiet"] === null, "agent: false means no type");
+  ok(names["gw/flash2"] === "deepseek-flash-gw", "a display name already taken gets the provider id: " + names["gw/flash2"]);
+  ok(names["gw/x"] === "explore-gw", "a built-in type's name is never shadowed: " + names["gw/x"]);
+
+  const defs = api.agents(undefined);
+  ok(defs && Object.keys(defs).sort().join(",") === "deepseek-flash,deepseek-flash-gw,deepseek-pro,explore-gw,gemini-3-8-flash",
+     "agents(): one definition per model with a type: " + Object.keys(defs || {}).join(","));
+  ok(defs["deepseek-flash"].model === "claude-deepseek-flash[1m]" && defs["gemini-3-8-flash"].model === "claude-gemini-3.8-flash",
+     "a definition runs the model under its listed id");
+  ok(defs["deepseek-pro"].model === "claude-deepseek-pro[1m]", "a model listed twice (both) runs its agent on the 1M twin");
+  ok(/^Sub-agent running on DeepSeek Flash via deepseek/.test(defs["deepseek-flash"].description) &&
+     /^You are a sub-agent running on DeepSeek Flash, a custom model served by deepseek/.test(defs["deepseek-flash"].prompt),
+     "the generated description and prompt name the model and the provider");
+  ok(defs["deepseek-pro"].description === "Judge-free fan-out on Pro" && /^You are a sub-agent/.test(defs["deepseek-pro"].prompt),
+     "a configured description is used as is, the prompt stays generated");
+  ok(defs["explore-gw"].prompt === "Tu es Explore sur X." && /^Sub-agent running on Explore via gw/.test(defs["explore-gw"].description),
+     "and the reverse");
+  ok(!("tools" in defs["deepseek-flash"]), "no tool restriction: the type inherits the session's tools");
+  const theirs = { "deepseek-flash": { description: "the app's own", prompt: "p" }, other: { description: "o", prompt: "q" } };
+  const merged = api.agents(theirs);
+  ok(merged !== theirs && merged["deepseek-flash"].description === "the app's own" && merged.other && merged["gemini-3-8-flash"],
+     "the app's own definitions are kept and win a name clash");
+  ok(api.agents("nonsense") === "nonsense" && api.agents([1]).length === 1, "an unexpected shape from the app is left alone");
+
+  const line = api.appendSystemPrompt(undefined);
+  ok(typeof line === "string" && /^Custom models available in this app \(claude-desktop-extra\)/.test(line), "appendSystemPrompt(): the line, alone when the app has none");
+  ok(/claude-deepseek-flash\[1m\] \(DeepSeek Flash, deepseek; sub-agent type deepseek-flash\)/.test(line) &&
+     /claude-deepseek-pro and claude-deepseek-pro\[1m\] \(DeepSeek Pro, deepseek; sub-agent type deepseek-pro\)/.test(line) &&
+     /claude-quiet \(quiet, deepseek\)[;.]/.test(line), "it lists every id with its name, provider and type (none for quiet): " + line);
+  ok(/subagent_type/.test(line) && /agentType: "<type>"/.test(line) && /not valid values for the Agent tool's `model` parameter/.test(line),
+     "and says how to launch one, and where the ids are refused");
+  ok(!/Sub-agents launched without a model/.test(line), "no sub-agent default: not mentioned");
+  ok(api.appendSystemPrompt("The app's suffix.") === "The app's suffix.\n\n" + line, "appended after the app's own suffix");
+  ok(api.appendSystemPrompt("  ") === line, "a blank suffix is replaced");
+  const arr = api.appendSystemPrompt(["a", "b"]);
+  ok(Array.isArray(arr) && arr.length === 3 && arr[2] === line, "an array suffix gets one more entry");
+  ok(!("CLAUDE_CODE_SUBAGENT_MODEL" in api.cliEnv()), "no sub-agent default: the CLI env is silent about it");
+
+  // The default sub-agent model and the announce switch through the panel.
+  const { h, api: api2 } = load(dir);
+  let r = await h["cdb-cm:subagent-set"](okSenderEv, "nope");
+  ok(r.ok === false && /not a configured custom model/.test(r.error), "subagent-set refuses an unknown model");
+  r = await h["cdb-cm:subagent-set"](okSenderEv, "deepseek-flash[1m]");
+  ok(r.ok === true && r.subagentModel === "claude-deepseek-flash[1m]", "subagent-set resolves a bare id (even with [1m]) to the listed id: " + r.subagentModel);
+  ok(JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.subagentModel === "claude-deepseek-flash",
+     "and writes the alias");
+  ok(api2.cliEnv().CLAUDE_CODE_SUBAGENT_MODEL === "claude-deepseek-flash[1m]", "the CLI env then carries CLAUDE_CODE_SUBAGENT_MODEL");
+  ok(/Sub-agents launched without a model of their own run on claude-deepseek-flash\[1m\]\./.test(api2.appendSystemPrompt(undefined)),
+     "and the line mentions it");
+  r = await h["cdb-cm:subagent-set"](okSenderEv, "");
+  ok(r.ok === true && r.subagentModel === "" && !("subagentModel" in (JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels || {})),
+     "an empty value clears it");
+  r = await h["cdb-cm:announce-set"](okSenderEv, "no");
+  ok(r.ok === false, "announce-set wants a boolean");
+  r = await h["cdb-cm:announce-set"](okSenderEv, false);
+  ok(r.ok === true && r.announce === false && r.announceText === "", "announce off: reported, no text");
+  ok(api2.appendSystemPrompt("keep") === "keep" && api2.appendSystemPrompt(undefined) === undefined, "and the suffix is left exactly as the app had it");
+  ok(api2.agents(undefined)["deepseek-flash"], "the types are still defined - only the line is off");
+  r = await h["cdb-cm:announce-set"](okSenderEv, true);
+  ok(r.ok === true && r.announce === true && !("announce" in (JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels || {})),
+     "announce on again is the default, so the key is dropped");
+  const det = await h["cdb-cm:config-read"](okSenderEv);
+  const pro = det.providers[0].models[1];
+  ok(pro.agent === true && pro.agentName === "deepseek-pro" && pro.agentDescription === "Judge-free fan-out on Pro" && pro.agentPrompt === "" &&
+     pro.agentDefaults.name === "deepseek-pro" && /^Sub-agent running on DeepSeek Pro/.test(pro.agentDefaults.description),
+     "the panel sees the type, what is customised and the generated defaults");
+  ok(det.providers[0].models[2].agent === false && det.providers[0].models[2].agentName === "", "and a model without a type");
+  ok(typeof det.announceText === "string" && /^Custom models available/.test(det.announceText), "and the line itself");
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// --- sub-agent fields through model-set ---------------------------------------------
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-cm-main-"));
+  const { h } = load(dir);
+  let r = await h["cdb-cm:provider-set"](okSenderEv, { id: "ds", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "sk-test-1234567890" });
+  ok(r.ok === true, "provider added");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-flash", name: "DeepSeek Flash", agent: true, agentName: "", agentDescription: "", agentPrompt: "" });
+  ok(r.ok === true && r.providers[0].models[0].agentName === "deepseek-flash", "a model added with empty agent fields gets the generated type");
+  let written = JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[0];
+  ok(!("agent" in written), "and nothing about it is written (the defaults are not stored)");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-pro", agent: true, agentName: "Fan-Out", agentDescription: "Fan-out only", agentPrompt: "Do the step." });
+  ok(r.ok === true && r.providers[0].models[1].agentName === "fan-out", "a typed name is lowercased and used");
+  written = JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[1];
+  ok(written.agent && written.agent.name === "fan-out" && written.agent.description === "Fan-out only" && written.agent.prompt === "Do the step.",
+     "the customised texts are written under agent");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-x", agent: true, agentName: "fan-out" });
+  ok(r.ok === false && /sub-agent name fan-out is already used by ds \/ deepseek-pro/.test(r.error), "a typed name already taken is refused: " + r.error);
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-x", agent: true, agentName: "general-purpose" });
+  ok(r.ok === false && /built-in/.test(r.error), "a built-in type's name is refused");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-x", agent: true, agentName: "Not/ok" });
+  ok(r.ok === false && /lowercase letters, digits and -/.test(r.error), "an invalid name is refused");
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "deepseek-pro", agent: false });
+  ok(r.ok === true && r.providers[0].models[1].agent === false && r.providers[0].models[1].agentName === "", "unticking the type");
+  written = JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers[0].models[1];
+  ok(written.agent === false, "is written as agent: false");
+  rmSync(dir, { recursive: true, force: true });
+}
+
 // --- sender checks ------------------------------------------------------------
 {
   const dir = mkdtempSync(join(tmpdir(), "cdb-cm-main-"));
