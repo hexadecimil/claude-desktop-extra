@@ -60,11 +60,12 @@ const api = exposed.api;
 }
 {
   calls.length = 0;
-  api.customModelsWebSearchSet(null); api.customModelsProviderDelete("gw"); api.customModelsModelDelete("gw", "m");
+  api.customModelsWebSearchSet(null); api.customModelsSmallFastSet("deepseek-flash");
+  api.customModelsProviderDelete("gw"); api.customModelsModelDelete("gw", "m");
   api.customModelsTest("gw"); api.customModelsModelsList("gw"); api.customModelsEffortProbe("gw", "m");
-  ok(calls.map((c) => c[0]).join(" ") === "cdb-cm:websearch-set cdb-cm:provider-delete cdb-cm:model-delete cdb-cm:provider-test cdb-cm:models-list cdb-cm:effort-probe",
+  ok(calls.map((c) => c[0]).join(" ") === "cdb-cm:websearch-set cdb-cm:smallfast-set cdb-cm:provider-delete cdb-cm:model-delete cdb-cm:provider-test cdb-cm:models-list cdb-cm:effort-probe",
      "the other custom-models methods hit their fixed channels");
-  ok(calls[0][1] === "" && calls[2][1] === "gw" && calls[2][2] === "m", "arguments are stringified");
+  ok(calls[0][1] === "" && calls[1][1] === "deepseek-flash" && calls[3][1] === "gw" && calls[3][2] === "m", "arguments are stringified");
 }
 {
   calls.length = 0;

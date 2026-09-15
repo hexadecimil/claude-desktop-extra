@@ -2185,6 +2185,60 @@
       wsRow.appendChild(wsAside);
       host.appendChild(wsRow);
 
+      // --- small/fast model: the CLI's ANTHROPIC_SMALL_FAST_MODEL slot --------
+      // Covers WebFetch page synthesis, the mid-turn intent classifier, and -
+      // when the web-search model above is unset - the web-search sub-request.
+      var hf = el("div", "cdbx-sec-h");
+      hf.appendChild(el("span", "cdbx-sec-t", "Small / fast model"));
+      host.appendChild(hf);
+      var sfRow = el("div", "cdbx-row");
+      var sfMain = el("div", "cdbx-row-main");
+      sfMain.appendChild(el("div", "cdbx-id", "Small / fast model"));
+      sfMain.appendChild(el("div", "cdbx-note",
+        "The CLI keeps one slot for its light, background work and reads it from " +
+        "ANTHROPIC_SMALL_FAST_MODEL: WebFetch's page synthesis, the mid-turn intent " +
+        "classifier (the status chip while a turn runs - non-blocking, its result " +
+        "is dropped if late), and - when the web-search model above is left on " +
+        "Anthropic - the web-search sub-request. Point the slot at one of your " +
+        "custom models to keep that work off the Anthropic subscription, or at " +
+        "another Claude model, or keep the default. Any configured model qualifies. " +
+        "Takes effect the next time a session opens - already-open sessions keep " +
+        "what they got."));
+      sfRow.appendChild(sfMain);
+      var sfAside = el("div", "cdbx-row-aside");
+      var sfSel = el("select", "cdbx-select cdbx-models-smallfast");
+      var sfNone = el("option", "", "Anthropic's default (a small Claude model)");
+      sfNone.value = "";
+      sfSel.appendChild(sfNone);
+      (st.providers || []).forEach(function (p) {
+        p.models.forEach(function (m) {
+          var o = el("option", "", p.id + " / " + m.name);
+          o.value = m.alias;
+          sfSel.appendChild(o);
+        });
+      });
+      (st.anthropicModels || []).forEach(function (m) {
+        var o = el("option", "", "Anthropic / " + m.name);
+        o.value = m.id;
+        sfSel.appendChild(o);
+      });
+      var sfCur = (st.smallFastModel || "").replace(/\[1m\]$/, "");
+      sfSel.value = sfCur;
+      if (sfSel.value !== sfCur) sfSel.value = "";
+      sfSel.disabled = !!st.smallFastModelLocked;
+      if (st.smallFastModelLocked) sfSel.title = "Set in claude-desktop-extra.jsonc - edit that file to change it";
+      sfSel.addEventListener("change", function () {
+        sfSel.disabled = true;
+        call("customModelsSmallFastSet", sfSel.value).then(function (okd) {
+          if (okd) toast(sfSel.value ? "Small/fast work now goes to " + sfSel.options[sfSel.selectedIndex].textContent
+            : "Small/fast work back on Anthropic's default");
+          else sfSel.disabled = false;
+        });
+      });
+      sfAside.appendChild(sfSel);
+      sfRow.appendChild(sfAside);
+      host.appendChild(sfRow);
+
       // --- sub-agents ---------------------------------------------------------
       // Each model is also a sub-agent type Claude launches by name (its row
       // says which; the model form edits it). Two app-wide choices here: the

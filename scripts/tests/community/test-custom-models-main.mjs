@@ -567,6 +567,35 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   r = await h["cdb-cm:websearch-set"](okSenderEv, "");
   ok(r.ok === true && r.webSearch === "" && !("webSearch" in JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels),
      "an empty value goes back to Anthropic and drops the key");
+
+  // The small/fast slot: ANTHROPIC_SMALL_FAST_MODEL. Unlike webSearch, no tool
+  // restriction - a model marked webSearch:false still qualifies, since the
+  // slot covers WebFetch and the mid-turn classifier, not web search.
+  ok(r.smallFastModel === "" && r.smallFastModelLocked === false, "the small/fast slot defaults to Anthropic");
+  ok(!("ANTHROPIC_SMALL_FAST_MODEL" in api.cliEnv()), "and is absent from the CLI env when unset");
+  r = await h["cdb-cm:smallfast-set"](okSenderEv, "nope");
+  ok(r.ok === false && /neither/.test(r.error), "the small/fast slot only accepts a configured model or an Anthropic id");
+  r = await h["cdb-cm:smallfast-set"](okSenderEv, "claude-opus-5");
+  ok(r.ok === true && r.smallFastModel === "claude-opus-5" && api.cliEnv().ANTHROPIC_SMALL_FAST_MODEL === "claude-opus-5",
+     "an Anthropic id is accepted as the small/fast model and lands in the CLI env");
+  r = await h["cdb-cm:smallfast-set"](okSenderEv, "deepseek-flash");
+  ok(r.ok === true && r.smallFastModel === "claude-deepseek-flash", "a custom alias is resolved and stored");
+  ok(JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.smallFastModel === "claude-deepseek-flash",
+     "as customModels.smallFastModel in the .json");
+  ok(api.cliEnv().ANTHROPIC_SMALL_FAST_MODEL === "claude-deepseek-flash", "and is injected as ANTHROPIC_SMALL_FAST_MODEL in the CLI env");
+  // A model marked without the web search tool is allowed for the slot (it is
+  // not web search): the tool restriction is webSearch's, not the slot's.
+  r = await h["cdb-cm:model-set"](okSenderEv, "ds", { id: "nosearch", webSearch: false });
+  r = await h["cdb-cm:smallfast-set"](okSenderEv, "nosearch");
+  ok(r.ok === true && r.smallFastModel === "claude-nosearch", "a model without the web search tool is accepted for the small/fast slot");
+  await h["cdb-cm:model-delete"](okSenderEv, "ds", "nosearch");
+  // The [1m] twin is stripped: the small/fast slot runs the base id.
+  r = await h["cdb-cm:smallfast-set"](okSenderEv, "deepseek-flash[1m]");
+  ok(r.ok === true && r.smallFastModel === "claude-deepseek-flash", "the [1m] twin is resolved to the base alias");
+  r = await h["cdb-cm:smallfast-set"](okSenderEv, "");
+  ok(r.ok === true && r.smallFastModel === "" && !("smallFastModel" in JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels),
+     "an empty value goes back to Anthropic and drops the key");
+
   r = await h["cdb-cm:pref-set"](okSenderEv, false);
   ok(r.ok === true && r.enabled === false, "the switch works once a model exists");
   ok(JSON.parse(readFileSync(join(dir, "claude-desktop-extra.json"), "utf8")).customModels.providers.length === 1,
@@ -690,6 +719,14 @@ async function settle() { await new Promise((r) => setTimeout(r, 10)); }
   r = await h["cdb-cm:websearch-set"](okSenderEv, "deepseek-flash");
   ok(r.ok === false && /claude-desktop-extra\.jsonc/.test(r.error), "a top-level webSearch in the .jsonc locks the select");
   ok(api.readConfig().webSearch === "claude-gw-model", "and wins");
+  // Rewrite the .jsonc with smallFastModel instead of webSearch: the PROVIDERS
+  // fixture still has its per-provider webSearch (deepseek-flash) and the deepseek
+  // provider; the .json provider (gw, stored key) still sits next to it.
+  writeFileSync(join(dir, "claude-desktop-extra.jsonc"), PROVIDERS.replace('"providers"', '"smallFastModel": "gw-model",\n    "providers"'));
+  r = await h["cdb-cm:smallfast-set"](okSenderEv, "deepseek-flash");
+  ok(r.ok === false && /claude-desktop-extra\.jsonc/.test(r.error), "a top-level smallFastModel in the .jsonc locks the select");
+  ok(api.readConfig().smallFastModel === "claude-gw-model", "and wins");
+  ok(api.cliEnv().ANTHROPIC_SMALL_FAST_MODEL === "claude-gw-model", "and reaches the CLI env");
   const cfg = api.readConfig();
   ok(cfg.providers.length === 2 && cfg.providers[1].apiKey === "sk-gw-1234567890" && cfg.providers[1].keySource === "stored",
      "the routing config resolves the stored key of the .json provider");

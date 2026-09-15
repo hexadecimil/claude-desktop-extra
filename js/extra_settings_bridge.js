@@ -150,6 +150,13 @@
     customModelsWebSearchSet: function (value) {
       return ipcRenderer.invoke("cdb-cm:websearch-set", String(value || ""));
     },
+    // The CLI's "small/fast model" slot (ANTHROPIC_SMALL_FAST_MODEL): WebFetch
+    // page synthesis, the mid-turn intent classifier, and - when the web-search
+    // model above is unset - the web-search sub-request. "" for the CLI's own
+    // small default, else a custom alias or Anthropic id.
+    customModelsSmallFastSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:smallfast-set", String(value || ""));
+    },
     // The default sub-agent model ("" = the CLI's own) and the system-prompt
     // line switch - both read when a session opens.
     customModelsSubagentSet: function (value) {

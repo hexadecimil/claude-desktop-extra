@@ -58,6 +58,12 @@ The same configuration can be written by hand in `~/.config/Claude/claude-deskto
                                  // one-tool request the CLI sends to a small Claude model, whatever
                                  // the session's model. Name a custom model (id or claude-<id>) or
                                  // any Anthropic id (claude-opus-5) to send those there instead.
+  "smallFastModel": "deepseek-flash", // the CLI's "small/fast model" slot (ANTHROPIC_SMALL_FAST_MODEL):
+                                 // WebFetch's page synthesis, the mid-turn intent classifier, and -
+                                 // when `webSearch` above is unset - the web-search sub-request run on
+                                 // this model. A custom model (id or claude-<id>, any - the web-search
+                                 // tool restriction does not apply here), or any Anthropic id, or absent
+                                 // for the CLI's own small default. See Small / fast model
   "subagentModel": "deepseek-flash", // optional: the model of every sub-agent that names none - the CLI's
                                  // own Explore, Plan and general-purpose included (CLAUDE_CODE_SUBAGENT_MODEL).
                                  // Default: the CLI's, the session's model. See Sub-agents
@@ -144,6 +150,30 @@ Two different things change at two different times:
 
 The one exception: a session opened before your very first provider existed was spawned without the preload (the feature contributes nothing to a session while nothing is configured), so it needs the app restarted once.
 
+### Small / fast model
+
+The CLI keeps one slot for its light, background work - the "small/fast model" it reads from
+`ANTHROPIC_SMALL_FAST_MODEL`. Three things run on it:
+
+- **WebFetch** - the `WebFetch` tool's page synthesis (the model that reads the fetched page and
+  answers the prompt against it), not the fetch itself.
+- the **mid-turn intent classifier** - a background call while a turn runs that feeds the status
+  chip and the thread recap. Non-blocking: its result is dropped if it arrives late, so a wrong
+  or slow model here never corrupts the main answer.
+- the **web-search sub-request** *when `webSearch` is unset* - once `webSearch` names a target, the
+  search runs there and the slot no longer touches it.
+
+Point the slot at a custom model (`smallFastModel`, the id or `claude-<id>`; any configured model
+qualifies - the per-model `webSearch` tool restriction does not apply here) or any Anthropic id, or
+leave it on the CLI's own small default. Because the slot is a CLI env var, the setting takes effect
+the next time a session opens - already-open sessions keep what they got (the same as `subagentModel`).
+A custom alias is routed by the preload like any other request; an Anthropic id the CLI sends as-is.
+This moves WebFetch and the classifier off the Anthropic subscription when the slot names a custom
+model - the goal is a small/fast model doing light work cheaply, not the main loop's.
+
+`ANTHROPIC_DEFAULT_HAIKU_MODEL` is a different thing - a Bedrock/Vertex fallback for when the chosen
+Haiku is unavailable - and is not set here.
+
 ### Sub-agents
 
 Every model is also a **sub-agent type**, handed to the CLI when a session opens - the same
@@ -183,7 +213,7 @@ To the CLI only: in the environment of the Code-tab session at spawn (the channe
 Nothing local feeds the Code tab's model menu: the page (remote claude.ai code) builds it from `model_selector_config` in the `/api/bootstrap` response and then tells the app which ids exist. `modelPicker` in `~/.claude/settings.json` only reaches the CLI's own `/model`. So the patch (`patches/community/add_feature_custom_models.nim`) does three things:
 
 - **Picker.** `js/custom_models_main.js` attaches the Chrome DevTools Protocol `Fetch` domain to claude.ai webContents, pauses the bootstrap *response*, and appends the configured entries to the surfaces it is configured for. The entries copy the shape the live bootstrap carries for that surface (name, short name, section, capabilities, the effort menu - whose localised labels are borrowed from the surface's own Anthropic entries), so the page renders them like any other model. Anthropic's list stays whatever the server sent, so new Claude models keep appearing. In subscription mode the app's own model validator accepts any id (the blocklist that rejects non-Anthropic names only runs in 3P mode), and the page reports the enriched list back to the app, which is what lets a session start on one of ours.
-- **Routing.** The Claude Code binary is a compiled Bun program and honours `BUN_OPTIONS`. `cliEnv()` is spliced into the environment the app assembles for every Code-tab session (sub-patch B, anchored on the `DISABLE_MICROCOMPACT`/`NODE_USE_SYSTEM_CA` literals of that object) and adds `--preload=<userData>/custom-models/preload.js` - `js/custom_models_preload.js`, written there by the app - plus the resolved providers in `CDB_CUSTOM_MODELS_JSON` and the path of `routes.json` in `CDB_CUSTOM_MODELS_ROUTES`. The preload replaces `fetch` inside the CLI, forwards only requests whose model is one of ours, and re-reads `routes.json` (one `stat` per API request) when the app rewrites it; when the feature is off it contributes nothing and the session is exactly upstream's. A `BUN_OPTIONS` the app inherited from its environment is kept, our `--preload` appended once: any other preload named there runs in the CLI too, and a leftover `fetch` hook from an earlier setup can quietly serve what this one leaves alone (a custom id whose provider was just removed, for instance) - `CDB_CUSTOM_MODELS_DEBUG=1` shows the `passthrough` and a fresh `-p` run of the CLI with only our preload shows the error the CLI gives on its own.
+- **Routing.** The Claude Code binary is a compiled Bun program and honours `BUN_OPTIONS`. `cliEnv()` is spliced into the environment the app assembles for every Code-tab session (sub-patch B, anchored on the `DISABLE_MICROCOMPACT`/`NODE_USE_SYSTEM_CA` literals of that object) and adds `--preload=<userData>/custom-models/preload.js` - `js/custom_models_preload.js`, written there by the app - plus the resolved providers in `CDB_CUSTOM_MODELS_JSON` and the path of `routes.json` in `CDB_CUSTOM_MODELS_ROUTES`. `CLAUDE_CODE_SUBAGENT_MODEL` (the default sub-agent model) and `ANTHROPIC_SMALL_FAST_MODEL` (the [small/fast slot](#small--fast-model) - WebFetch and the mid-turn classifier) ride along when set. The preload replaces `fetch` inside the CLI, forwards only requests whose model is one of ours, and re-reads `routes.json` (one `stat` per API request) when the app rewrites it; when the feature is off it contributes nothing and the session is exactly upstream's. A `BUN_OPTIONS` the app inherited from its environment is kept, our `--preload` appended once: any other preload named there runs in the CLI too, and a leftover `fetch` hook from an earlier setup can quietly serve what this one leaves alone (a custom id whose provider was just removed, for instance) - `CDB_CUSTOM_MODELS_DEBUG=1` shows the `passthrough` and a fresh `-p` run of the CLI with only our preload shows the error the CLI gives on its own.
 
 - **Sub-agents.** The app opens every Code session with an `initialize` request to the CLI that carries, among other fields, `appendSystemPrompt` and `agents` - the Agent SDK's system-prompt suffix and programmatic sub-agent definitions. Sub-patch C routes both through `agents()` and `appendSystemPrompt()` of the main module (two literal anchors in the code-split chunk, each expected exactly once): one definition per model with a type, `{description, prompt, model: <listed id>}`, and the announce line. The CLI accepts any `--model`-valid id in a definition's `model` (checked 2026-09-14, CLI 2.1.266, with `--agents`), and honours `CLAUDE_CODE_SUBAGENT_MODEL` with such an id too. Off, both functions return the app's own values untouched.
 

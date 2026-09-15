@@ -724,6 +724,7 @@ async function featuresPanel(featuresItem) {
 async function modelsPanel(modelsItem) {
   window.__cmConfig = { ok: true, enabled: true, configured: true, lockedByJsonc: false, source: "default",
     surfaces: ["ccd", "code"], models: 2, webSearch: "claude-deepseek-flash", webSearchLocked: false,
+    smallFastModel: "", smallFastModelLocked: false,
     subagentModel: "", subagentModelLocked: false, announce: true, announceLocked: false,
     announceText: "Custom models available in this app (claude-desktop-extra), served by the user's own providers: claude-deepseek-flash[1m] (DeepSeek Flash, deepseek; sub-agent type deepseek-flash).",
     anthropicModels: [{ id: "claude-opus-5", name: "Opus 5" }, { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }],
@@ -781,6 +782,19 @@ async function modelsPanel(modelsItem) {
   ws.dispatchEvent(new Event("change", { bubbles: true }));
   await sleep(40);
   ok(window.__cmWrites.indexOf("websearch-set:") >= 0, "picking Anthropic writes an empty value");
+  window.__cmWrites = [];
+  // The Small / fast model section: the ANTHROPIC_SMALL_FAST_MODEL slot. Unlike
+  // the web-search select above it, every configured model qualifies - a model
+  // marked without the web search tool is offered here.
+  const sf = panel.querySelector("select.cdbx-models-smallfast");
+  ok(!!sf && sf.value === "" && sf.options[0].value === "" && /Anthropic's default/.test(sf.options[0].textContent),
+     "the small/fast select defaults to Anthropic, first option the default (" + (sf && sf.options.length) + ")");
+  ok(Array.from(sf.options).some((o) => o.value === "claude-gw-model"),
+     "a model without the web search tool IS offered for the small/fast slot (it is not web search)");
+  sf.value = "claude-deepseek-flash";
+  sf.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("smallfast-set:claude-deepseek-flash") >= 0, "picking a model writes the small/fast alias: " + JSON.stringify(window.__cmWrites));
   window.__cmWrites = [];
   // The Sub-agents section: the default sub-agent model and the announce line.
   const sa = panel.querySelector("select.cdbx-models-subagent");
@@ -2024,6 +2038,7 @@ window.cdbExtra = {
   customModelsProviderSet: function (p) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-set:" + p.id + ":" + p.baseUrl + ":" + (p.apiKey ? "key" : "nokey") + ":" + p.preset + ":" + p.modelsUrl + ":" + (p.effort ? p.effort.join("/") : "-")]); return Promise.resolve(window.__cmConfig); },
   customModelsModelsList: function (pid) { window.__cmWrites = (window.__cmWrites || []).concat(["list:" + pid]); return Promise.resolve(window.__cmModelsList || { ok: true, source: "https://api.deepseek.com/v1/models", models: [{ id: "deepseek-flash", name: "deepseek-flash" }, { id: "deepseek-v4-pro", name: "deepseek-v4-pro" }] }); },
   customModelsWebSearchSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["websearch-set:" + v]); return Promise.resolve(window.__cmConfig); },
+  customModelsSmallFastSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["smallfast-set:" + v]); return Promise.resolve(window.__cmConfig); },
   customModelsProviderDelete: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-delete:" + id]); return Promise.resolve(window.__cmConfig); },
   customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch + (m.context ? ":" + m.context : "")]); if ("agent" in m) window.__cmWrites.push("model-agent:" + pid + ":" + m.id + ":" + m.agent + ":" + m.agentName + ":" + m.agentDescription + ":" + m.agentPrompt); return Promise.resolve(window.__cmConfig); },
   customModelsSubagentSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["subagent-set:" + v]); return Promise.resolve(window.__cmConfig); },

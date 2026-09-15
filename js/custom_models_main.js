@@ -152,6 +152,13 @@
   //   webSearch?: "deepseek-flash", // app-wide: the CLI's web-search sub-request goes to
   //                                 // this model instead of Anthropic's small default - a
   //                                 // custom model, or any Anthropic id (claude-opus-5...)
+  //   smallFastModel?: "deepseek-flash", // the CLI's ANTHROPIC_SMALL_FAST_MODEL slot:
+  //                                 // WebFetch's page synthesis, the mid-turn intent
+  //                                 // classifier, and - when webSearch is unset - the
+  //                                 // web-search sub-request run on this model. A custom
+  //                                 // alias (routed by the preload), or any Anthropic id,
+  //                                 // or absent for the CLI's own small default.
+  //   subagentModel?: "deepseek-flash[1m]", // the model of sub-agents that name none
   //   providers: [{
   //     id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic",
   //     apiKey | apiKeyEnv | apiKeyFile, headers?, effortMap?, context?,
@@ -386,6 +393,24 @@
       else warnOnce("ws" + want, "webSearch names " + want + ", which is neither a configured model nor an Anthropic id - web search stays on Anthropic");
     }
 
+    // The CLI's "small/fast model" slot (ANTHROPIC_SMALL_FAST_MODEL): WebFetch
+    // page synthesis, the mid-turn intent classifier, and - when webSearch is
+    // not set - the web-search sub-request run on it. A custom alias (the
+    // preload routes it), or any Anthropic id, or "" for the CLI's own small
+    // default. Resolved like webSearch: .jsonc value, else .json, but - unlike
+    // webSearch - no per-provider fallback (there was none to inherit from).
+    var sfRaw = typeof a.smallFastModel === "string" ? a.smallFastModel
+      : (typeof b.smallFastModel === "string" ? b.smallFastModel : "");
+    var sfLocked = typeof a.smallFastModel === "string";
+    var smallFastModel = "";
+    if (sfRaw.trim()) {
+      var sfWant = sfRaw.trim().replace(/\[\w+\]$/, ""); // the [1m] twin is not the small/fast one
+      var sfAlias = sfWant.indexOf(ID_PREFIX) === 0 ? sfWant : ID_PREFIX + sfWant;
+      if (seenModel[sfAlias]) smallFastModel = sfAlias;
+      else if (ANTHROPIC_ID_RE.test(sfWant)) smallFastModel = sfWant;
+      else warnOnce("sf" + sfWant, "smallFastModel names " + sfWant + ", which is neither a configured model nor an Anthropic id - the small/fast model stays on Anthropic");
+    }
+
     // Sub-agent type names, one per model that has one: the configured name
     // when valid, else the display name slugged; never a built-in's, never
     // twice - the provider id, then a counter, break a tie.
@@ -434,6 +459,7 @@
     return { enabled: enabled, source: source, surfaces: surfaces, providers: usable,
       allProviders: providers, configured: usable.length > 0,
       webSearch: webSearch, webSearchLocked: wsLocked,
+      smallFastModel: smallFastModel, smallFastModelLocked: sfLocked,
       subagentModel: subagentModel, subagentModelLocked: samLocked,
       announce: announce, announceLocked: announceLocked };
   }
@@ -985,6 +1011,12 @@
       // The CLI's own switch for the model of every sub-agent that names none
       // - honoured with our ids the same way (checked 2026-09-14, CLI 2.1.266).
       if (cfg.subagentModel) env.CLAUDE_CODE_SUBAGENT_MODEL = cfg.subagentModel;
+      // The CLI's "small/fast model" slot (getSmallFastModel()): WebFetch page
+      // synthesis and the mid-turn intent classifier run on it - read by the
+      // CLI at the same time (checked 2026-09-15, CLI 2.1.266: ANTHROPIC_SMALL_FAST_MODEL
+      // is returned verbatim, no validation). A custom alias the preload routes;
+      // an Anthropic id the CLI sends as-is.
+      if (cfg.smallFastModel) env.ANTHROPIC_SMALL_FAST_MODEL = cfg.smallFastModel;
       return env;
     } catch (e) {
       log("cliEnv: " + (e && e.message ? e.message : String(e)) + " - session left untouched");
@@ -1129,6 +1161,8 @@
     });
     out.webSearch = cfg.webSearch;
     out.webSearchLocked = cfg.webSearchLocked;
+    out.smallFastModel = cfg.smallFastModel;
+    out.smallFastModelLocked = cfg.smallFastModelLocked;
     out.subagentModel = cfg.subagentModel;
     out.subagentModelLocked = cfg.subagentModelLocked;
     out.announce = cfg.announce;
@@ -1419,6 +1453,35 @@
     }
     var w = writeJson(function (cur) {
       if (value) cur.webSearch = value; else delete cur.webSearch;
+    });
+    if (!w.ok) return w;
+    return detail(readConfig());
+  });
+
+  // The CLI's "small/fast model" slot (ANTHROPIC_SMALL_FAST_MODEL): WebFetch
+  // synthesis, the mid-turn classifier and - when webSearch is unset - the
+  // web-search sub-request. "" for the CLI's own small default, else the id
+  // (or alias) of a configured custom model. Any configured model qualifies -
+  // unlike webSearch, no tool restriction.
+  _ipc.handle("cdb-cm:smallfast-set", function (ev, value) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    value = cleanString(value, 130);
+    var cfg = readConfig();
+    if (cfg.smallFastModelLocked) return { ok: false, error: "smallFastModel is set in " + JSONC_NAME + " - edit that file to change it" };
+    if (value) {
+      var want = value.replace(/\[\w+\]$/, ""); // the [1m] twin is not the small/fast one
+      var alias = want.indexOf(ID_PREFIX) === 0 ? want : ID_PREFIX + want;
+      var mine = null;
+      cfg.providers.forEach(function (p) { p.models.forEach(function (m) { if (m.alias === alias) mine = m; }); });
+      if (mine) value = alias;
+      else if (ANTHROPIC_ID_RE.test(value)) {
+        if (lastAnthropicModels.length && !lastAnthropicModels.some(function (m) { return m.id === value; })) {
+          return { ok: false, error: value + " is not one of the Anthropic models the picker lists" };
+        }
+      } else return { ok: false, error: value + " is neither a configured model nor an Anthropic model id" };
+    }
+    var w = writeJson(function (cur) {
+      if (value) cur.smallFastModel = value; else delete cur.smallFastModel;
     });
     if (!w.ok) return w;
     return detail(readConfig());
