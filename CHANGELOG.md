@@ -25,6 +25,14 @@ exposure was small, but the guard was weaker than its siblings for no reason.
   because it is not a security boundary (the page script only mounts the panel on claude.ai and
   every IPC call re-validates the sender).
 
+The four origins are the right contract, not a guess: upstream's own eIPC sender validator enforces
+exactly the same production set. Third-party inference is unaffected - in 3P mode the main window
+loads `app://localhost`, which our http(s)-only injection gate has always skipped, so the Extra panel
+never mounted there in the first place.
+
+Contributed by Mike Gordievsky ([@mike-the-enginer](https://github.com/mike-the-enginer)) in
+[#249](https://github.com/patrickjaja/claude-desktop-extra/pull/249) - thanks!
+
 ## 2026-09-10 (later)
 
 ### Launcher: five dead Chromium arguments removed, and the titlebar decision left to the app
