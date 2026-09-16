@@ -2,6 +2,29 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-16
+
+### Extra settings: the IPC sender guard now checks the origin, not just the scheme
+
+`__cdbEx_okSender` in `js/extra_settings_main.js` accepted the main frame of any `http(s)://`
+webContents. Every other main-process module (panel tabs, files quick-open, window controls, diff
+views) compares the parsed origin against an exact allowlist, and the Extra handlers are the ones that
+matter most: `cdb-deploy:set` / `cdb-deploy:save-raw` write the 3P gateway URL, its API key and the
+bootstrap URL, and `cdb-app:relaunch` restarts the app. Reaching them needed a page from another origin
+to end up in the main frame of a webContents that carries the `cdbExtra` preload, so the practical
+exposure was small, but the guard was weaker than its siblings for no reason.
+
+- The guard now uses the same `ALLOWED_ORIGINS` list and parsed-origin comparison as the sibling
+  modules. `https://evil.example`, `https://claude.ai.evil.example`, `http://claude.ai`,
+  `https://claude.ai:8443` and `https://user@claude.ai@evil.example` are all rejected; the four real
+  origins still pass. An unparseable URL or a sender without `isDestroyed()` fails closed.
+- `scripts/tests/core/test-deployment-main.mjs` now proves it: nine foreign `https` origins are refused
+  by `cdb-deploy:set` and `cdb-app:relaunch` and nothing lands on disk. Before the change the same
+  harness showed a foreign sender successfully writing `inferenceGatewayBaseUrl`.
+- The dom-ready page injection is unchanged: it still runs on every non-localhost http(s) document,
+  because it is not a security boundary (the page script only mounts the panel on claude.ai and
+  every IPC call re-validates the sender).
+
 ## 2026-09-10 (later)
 
 ### Launcher: five dead Chromium arguments removed, and the titlebar decision left to the app
