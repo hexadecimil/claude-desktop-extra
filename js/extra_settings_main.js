@@ -15,8 +15,9 @@
  * therefore tolerates a missing registry and answers {ok:false,error:...}.
  *
  * SECURITY: the caller is remote claude.ai code. Every handler validates its
- * sender (main frame of an http(s) webContents), flag ids must exist in the
- * catalog, and values are restricted to JSON scalars.
+ * sender's ORIGIN against an exact allowlist (main frame only - see
+ * __cdbEx_okSender below), flag ids must exist in the catalog, and values are
+ * restricted to JSON scalars.
  *
  * The two placeholder string literals below are replaced at build time by the
  * Nim patch with the contents of js/extra_settings_page.js and
@@ -32,6 +33,7 @@
   var _ipc = _electron.ipcMain;
   var _path = require("path");
   var _fs = require("fs");
+  var _URL = require("url").URL;
 
   var __cdbEx_pageSrc = "__CDB_EX_PAGE_SRC__";
   var __cdbEx_pageCss = "__CDB_EX_PAGE_CSS__";
@@ -1073,14 +1075,35 @@
   }
 
   // --- sender validation ---------------------------------------------------
-  // Only the main frame of an http(s) webContents, i.e. the mainView that our
-  // preload bridge lives in. Subframes never get the preload, but reject them
-  // explicitly rather than relying on that.
+  // Exact-origin allowlist, same posture as the panel-tabs, files-quick-open,
+  // window-controls and diff-views sender checks: the parsed origin is compared
+  // against the list, never a substring or prefix test of the raw URL. A scheme
+  // test alone ("is it http(s)?") accepted every https page that ended up in
+  // the main frame of a webContents carrying our preload - and the handlers
+  // behind this guard write the 3P gateway URL, its API key and the bootstrap
+  // URL, and relaunch the app. Only the main frame is accepted: subframes never
+  // get the preload, but reject them explicitly rather than relying on that.
+  var __cdbEx_ALLOWED_ORIGINS = [
+    "https://claude.ai",
+    "https://preview.claude.ai",
+    "https://claude.com",
+    "https://preview.claude.com"
+  ];
+  function __cdbEx_originAllowed(rawUrl) {
+    var origin;
+    try { origin = new _URL(String(rawUrl)).origin; } catch (e) { return false; }
+    for (var i = 0; i < __cdbEx_ALLOWED_ORIGINS.length; i++) {
+      if (origin === __cdbEx_ALLOWED_ORIGINS[i]) return true;
+    }
+    return false;
+  }
+  // FAILS CLOSED: wc.isDestroyed() is called unguarded - a sender object
+  // missing the method throws, and the catch turns that into "not ok".
   function __cdbEx_okSender(ev) {
     try {
       var wc = ev && ev.sender;
       if (!wc || wc.isDestroyed()) return false;
-      if (!/^https?:\/\//i.test(wc.getURL() || "")) return false;
+      if (!__cdbEx_originAllowed(wc.getURL() || "")) return false;
       var frame = ev.senderFrame;
       if (frame && frame.parent) return false;
       return true;

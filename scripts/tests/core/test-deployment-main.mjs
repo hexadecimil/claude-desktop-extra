@@ -443,6 +443,40 @@ section("[11] only the settings page may reach these handlers");
   const sub = { sender: { isDestroyed: () => false, getURL: () => "https://claude.ai/x" }, senderFrame: { parent: {} } };
   ok(p.handlers["cdb-deploy:mode"](sub, "1p").ok === false, "so is a subframe");
   ok(!existsSync(p.metaFile) && !existsSync(p.modeFile), "and neither wrote anything");
+
+  // The origin must be exactly ours. Every other main-process module compares
+  // the parsed origin against an allowlist; an http(s)-only test would let any
+  // https page that ends up in the main frame with our preload reach the
+  // handlers that write the 3P gateway URL, its API key and the bootstrap URL,
+  // and the one that relaunches the app.
+  const from = (u) => ({ sender: { isDestroyed: () => false, getURL: () => u }, senderFrame: { parent: null } });
+  const foreign = [
+    "https://evil.example/",
+    "https://evil.example/?next=claude.ai",
+    "https://claude.ai.evil.example/",
+    "https://evil.example/claude.ai/",
+    "https://evil.example#https://claude.ai",
+    "http://claude.ai/",
+    "https://claude.ai:8443/",
+    "https://user@claude.ai@evil.example/",
+    "https://xn--claude-ai.example/"
+  ];
+  for (const u of foreign) {
+    const r = p.handlers["cdb-deploy:set"](from(u), "inferenceGatewayBaseUrl", "https://attacker.example");
+    ok(r.ok === false && /unrecognized sender/.test(r.error), "an https sender at " + u + " is rejected", r.error);
+  }
+  ok(p.handlers["cdb-app:relaunch"](from("https://evil.example/")).ok === false,
+     "and the relaunch handler is behind the same guard");
+  ok(!existsSync(p.metaFile) && !existsSync(p.modeFile), "none of them wrote anything");
+
+  const allowed = ["https://claude.ai/settings", "https://preview.claude.ai/x",
+                   "https://claude.com/", "https://preview.claude.com/x?y=1#z"];
+  for (const u of allowed) {
+    ok(p.handlers["cdb-deploy:read"](from(u)).ok === true, "our own origin " + u + " is accepted");
+  }
+  ok(p.handlers["cdb-deploy:read"]({ sender: { getURL: () => "https://claude.ai/" }, senderFrame: { parent: null } }).ok === false,
+     "a sender without isDestroyed() fails closed");
+  ok(p.handlers["cdb-deploy:read"](from("not a url")).ok === false, "an unparseable URL fails closed");
 }
 
 // --- [12] a managed policy file that cannot be used -----------------------
