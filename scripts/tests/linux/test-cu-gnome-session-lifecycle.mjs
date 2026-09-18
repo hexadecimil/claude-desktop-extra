@@ -141,5 +141,30 @@ console.log("\n[3] the double release collapses to a single teardown");
   rig.restore();
 }
 
+console.log("\n[4] a release cancels a start that is only QUEUED behind a teardown");
+{
+  // end -> start (queued, nothing running yet) -> end. The queued continuation
+  // must consult the intent flag, not start unconditionally. Getting this wrong
+  // leaves the portal session UP with no lock held, i.e. a live
+  // RemoteDesktop/ScreenCast grant while the user believes CU is idle.
+  const rig = makeRig(120);
+  rig.ex.__setLockHeld(true);
+  await sleep(10);
+  rig.ex.__setLockHeld(false);   // teardown begins, parks on the pending start
+  await sleep(5);
+  rig.ex.__setLockHeld(true);    // queued behind the teardown
+  await sleep(5);
+  rig.ex.__setLockHeld(false);   // released again before the queue drains
+  await sleep(600);
+  const seq = calls(rig.log);
+  const starts = seq.filter(l => l === "CALL session-start").length;
+  ok(starts === 1, "no session is started after the final release", seq.join(" "));
+  ok(seq[seq.length - 1] === "DONE session-end",
+     "the run ends with the session DOWN, matching the released lock", seq.join(" "));
+  ok(rig.log.some(l => l.includes("queued session-start cancelled")),
+     "and the cancellation is reported in the diagnostics log");
+  rig.restore();
+}
+
 console.log("\n" + (fail ? `${pass} passed, ${fail} FAILED` : `ALL ${pass} CHECKS PASSED`));
 process.exit(fail ? 1 : 0);

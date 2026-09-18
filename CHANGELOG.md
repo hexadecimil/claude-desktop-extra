@@ -69,8 +69,10 @@ resolved and marked the session active again with no lock held, leaving the
 `gnome-portal-bridge` daemon alive until the process exited. `_gnomeSessionEnd` now clears
 the flag on entry and awaits any in-flight start before ending the session, and publishes
 that teardown so a lock re-acquired mid-teardown queues its start behind it instead of
-opening a second portal session and a second consent dialog. That is both halves of the
-shape the KDE path already used. The session transitions are now logged, so the ordering
+opening a second portal session and a second consent dialog. It also records whether a session is
+wanted at all, so a release that arrives while a start is merely QUEUED behind a teardown
+cancels it instead of bringing the portal up with no lock held, and it skips the teardown
+when nothing was ever started. That is the whole of the shape the KDE path already used. The session transitions are now logged, so the ordering
 is greppable in `claude-patches.log` rather than invisible, and
 `scripts/tests/linux/test-cu-gnome-session-lifecycle.mjs` pins all three orderings
 (it fails against the old code).
