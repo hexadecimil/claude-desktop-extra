@@ -44,20 +44,12 @@
 # generated class name, and every failure is soft (one diagnostic line, then
 # nothing - Ctrl+Shift+T stays the robust fallback).
 
-import std/[os, strutils, json, options]
-import std/nre
-
-proc replaceFirst(
-    content: var string, pattern: Regex, subFn: proc(m: RegexMatch): string
-): int =
-  ## Replace the first regex match. Returns 1 if replaced, 0 otherwise.
-  let maybeMatch = content.find(pattern)
-  if maybeMatch.isNone:
-    return 0
-  let m = maybeMatch.get()
-  let bounds = m.matchBounds
-  content = content[0 ..< bounds.a] & subFn(m) & content[bounds.b + 1 .. ^1]
-  return 1
+import std/[os, strutils, json]
+# `regex` (pure Nim) rather than std/nre: nre dlopens the legacy libpcre.so.3 at
+# runtime, which Ubuntu 24.04 - the CI test host - no longer ships (PCRE2 only),
+# so an nre-built binary exits 1 before it reads its input. Every other patch
+# that the feature-test harnesses execute uses `regex` for exactly this reason.
+import regex
 
 const MAIN_JS = staticRead("../../js/extra_settings_main.js")
 const PAGE_JS = staticRead("../../js/extra_settings_page.js")
@@ -93,7 +85,8 @@ proc apply*(input: string): string =
 
   # Our own payload must never contain sub-patch B's end-state shape, or that
   # sub-patch would read its own idempotency marker out of sub-patch A's output.
-  if EXTRA_JS.find(re"""\}globalThis\.__cdbRelaunchApp=""").isSome:
+  var guardMatch: RegexMatch2
+  if EXTRA_JS.find(re2"""\}globalThis\.__cdbRelaunchApp=""", guardMatch):
     echo "  [FAIL] js/extra_settings_main.js contains the relaunch-capture end-state shape -- " &
       "sub-patch B's idempotency check would false-positive"
     quit(1)
@@ -155,28 +148,36 @@ proc apply*(input: string): string =
     # there, leaving the bundle silently uncaptured on a green build. Anchor on
     # the injection's structural neighbour instead: the closing brace of the
     # captured function declaration immediately followed by the assignment.
-    let landedPat = re"""\}globalThis\.__cdbRelaunchApp=[\w$]+;"""
-    if result.find(landedPat).isSome:
+    let landedPat = re2"""\}globalThis\.__cdbRelaunchApp=[\w$]+;"""
+    var landed: RegexMatch2
+    if result.find(landedPat, landed):
       echo "  [OK] relaunch capture already present (idempotent)"
       patchesApplied.inc
     else:
+      # `regex` has no backreferences, so the parameter is captured at each of its
+      # three positions and the three are compared explicitly below - the same
+      # idiom add_feature_files_quick_open_worker uses for its method params.
       let relaunchPat =
-        re"""(function ([\w$]+)\(([\w$]+)=\[\]\)\{[\w$]+\.app\.isPackaged\?[\w$]+\(!0,\3\):[\w$]+\(\3\)\})"""
-      # replaceFirst can only ever answer 0 or 1, so it cannot tell us the anchor
-      # stopped being unique. Count first: a second matching site after a
-      # re-minify would mean we are guessing which one to capture.
-      let hits = result.findAll(relaunchPat).len
-      if hits != 1:
-        echo "  [FAIL] relaunchApp capture: " & $hits &
+        re2"""function ([\w$]+)\(([\w$]+)=\[\]\)\{[\w$]+\.app\.isPackaged\?[\w$]+\(!0,([\w$]+)\):[\w$]+\(([\w$]+)\)\}"""
+      # Count first: a second matching site after a re-minify would mean we are
+      # guessing which one to capture.
+      let hits = findAll(result, relaunchPat)
+      if hits.len != 1:
+        echo "  [FAIL] relaunchApp capture: " & $hits.len &
           " matches (expected exactly 1) -- re-audit the bundle"
         quit(1)
-      let n = replaceFirst(
-        result,
-        relaunchPat,
-        proc(m: RegexMatch): string =
-          m.captures[0] & RELAUNCH_ASSIGN & m.captures[1] & ";",
-      )
-      if n != 1 or result.find(landedPat).isNone:
+      let m = hits[0]
+      let fnName = result[m.group(0)]
+      let param = result[m.group(1)]
+      if result[m.group(2)] != param or result[m.group(3)] != param:
+        echo "  [FAIL] relaunchApp capture: the two arms forward (" & result[m.group(2)] &
+          ", " & result[m.group(3)] & ") but the parameter is `" & param &
+          "` -- wrong site"
+        quit(1)
+      result =
+        result[0 ..< m.boundaries.a] & result[m.boundaries] & RELAUNCH_ASSIGN & fnName &
+        ";" & result[m.boundaries.b + 1 .. ^1]
+      if not result.find(landedPat, landed):
         echo "  [FAIL] relaunchApp capture did not land"
         quit(1)
       echo "  [OK] relaunch capture: upstream relaunchApp published as globalThis.__cdbRelaunchApp"

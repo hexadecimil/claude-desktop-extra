@@ -12,7 +12,7 @@ chunks in v1.49585.0 survives into the 201 of v2.2553.0, and `index.js` and
 text rather than surviving by luck. Exactly one sub-patch needed re-anchoring.
 
 v2.2553.1 landed during the same pass. It re-emits every chunk hash again but is
-semantically identical where our work is pinned: the same 308 flag ids, the same 171
+semantically identical where our work is pinned: the same set of flag ids, the same 171
 managed-settings keys, the same 199 chunks and the same darwin/win32/linux gate counts,
 on the same Electron 44.2.0. All patches apply to it unchanged, so the audit below holds
 for both and `.upstream-version` records v2.2553.1.
