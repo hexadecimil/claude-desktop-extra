@@ -270,13 +270,20 @@ async function _gnomeSessionEnd(){
   _gnomeSessionWanted=!1;
   if(_gnomeSessionEnding)return _gnomeSessionEnding;
   var bin=_gnomeBridgeBin();
+  // Snapshot BEFORE clearing: the skip below has to ask whether a session was up
+  // when this release arrived, not whether it is up after we cleared the flag.
+  // Testing the live flag there makes the first conjunct always true, which
+  // reduces the skip to `if(!starting)` and silently stops ending the session on
+  // the ordinary path (start completed, then released) - the exact leak this
+  // function exists to prevent.
+  var wasActive=_gnomeSessionActive;
   _gnomeSessionActive=!1;
   if(!bin){_gnomeSessionStarting=null;return}
   var starting=_gnomeSessionStarting;_gnomeSessionStarting=null;
   // Nothing was ever brought up: no session to end. Spawning session-end anyway
   // would hold the teardown latch for the length of a pointless subprocess and
   // widen the window in which the sync backstop refuses.
-  if(!_gnomeSessionActive&&!starting)return;
+  if(!wasActive&&!starting)return;
   _gnomeSessionEnding=(async function(){
     // Log the interesting transition: a release that arrived while the consent
     // dialog was still up. Without this the whole interleaving is invisible in

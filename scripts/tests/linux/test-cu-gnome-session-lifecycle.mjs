@@ -166,5 +166,38 @@ console.log("\n[4] a release cancels a start that is only QUEUED behind a teardo
   rig.restore();
 }
 
+console.log("\n[5] the ORDINARY lifecycle: start completes, then the lock is released");
+{
+  // The most common ordering in production and the easiest to leave uncovered:
+  // every other case here releases while the start is still pending, so
+  // _gnomeSessionStarting is non-null and any skip guard keyed on it is bypassed.
+  // Here the start has fully settled, so the teardown has to decide on the
+  // session flag alone. Getting that wrong means the portal session and the
+  // gnome-portal-bridge daemon survive every single lock release.
+  const rig = makeRig(20);
+  rig.ex.__setLockHeld(true);
+  await sleep(200);                 // let session-start fully settle
+  await rig.ex.__setLockHeld(false);
+  await sleep(300);
+  const seq = calls(rig.log);
+  ok(seq.includes("CALL session-end"),
+     "a release after a completed start still ends the session", seq.join(" "));
+  ok(seq[seq.length - 1] === "DONE session-end",
+     "and the run ends with the session DOWN", seq.join(" "));
+  ok(rig.log.some(l => l.includes("session ended")),
+     "and the teardown is reported in the diagnostics log");
+  rig.restore();
+}
+
+console.log("\n[6] a release with nothing ever started does not spawn session-end");
+{
+  const rig = makeRig(20);
+  await rig.ex.__setLockHeld(false);   // released without ever acquiring
+  await sleep(200);
+  const seq = calls(rig.log);
+  ok(seq.length === 0, "no bridge subprocess is spawned at all", seq.join(" ") || "(none)");
+  rig.restore();
+}
+
 console.log("\n" + (fail ? `${pass} passed, ${fail} FAILED` : `ALL ${pass} CHECKS PASSED`));
 process.exit(fail ? 1 : 0);
