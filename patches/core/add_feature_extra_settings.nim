@@ -44,7 +44,20 @@
 # generated class name, and every failure is soft (one diagnostic line, then
 # nothing - Ctrl+Shift+T stays the robust fallback).
 
-import std/[os, strutils, json]
+import std/[os, strutils, json, options]
+import std/nre
+
+proc replaceFirst(
+    content: var string, pattern: Regex, subFn: proc(m: RegexMatch): string
+): int =
+  ## Replace the first regex match. Returns 1 if replaced, 0 otherwise.
+  let maybeMatch = content.find(pattern)
+  if maybeMatch.isNone:
+    return 0
+  let m = maybeMatch.get()
+  let bounds = m.matchBounds
+  content = content[0 ..< bounds.a] & subFn(m) & content[bounds.b + 1 .. ^1]
+  return 1
 
 const MAIN_JS = staticRead("../../js/extra_settings_main.js")
 const PAGE_JS = staticRead("../../js/extra_settings_page.js")
@@ -57,7 +70,7 @@ const EXTRA_JS = MAIN_JS.replace("\"__CDB_EX_PAGE_SRC__\"", escapeJson(PAGE_JS))
     "\"__CDB_EX_PAGE_CSS__\"", escapeJson(PAGE_CSS)
   )
 
-const EXPECTED_PATCHES = 1
+const EXPECTED_PATCHES = 2
 
 # Positive end-state markers (Rule 6): the build tag, one handler name per panel
 # from the main half, and one class name from the page half - so a partially
@@ -78,38 +91,96 @@ proc apply*(input: string): string =
     echo "  [FAIL] page src/css placeholder was not substituted -- js/extra_settings_main.js drifted"
     quit(1)
 
+  # Our own payload must never contain sub-patch B's end-state shape, or that
+  # sub-patch would read its own idempotency marker out of sub-patch A's output.
+  if EXTRA_JS.find(re"""\}globalThis\.__cdbRelaunchApp=""").isSome:
+    echo "  [FAIL] js/extra_settings_main.js contains the relaunch-capture end-state shape -- " &
+      "sub-patch B's idempotency check would false-positive"
+    quit(1)
+
   var patchesApplied = 0
 
+  # ── Sub-patch A: the Extra settings IIFE ───────────────────────────────
   # Idempotency: assert OUR injected end-state, never merely the absence of
   # something else.
   let present = markersPresent(result)
   if present == MARKERS.len:
     echo "  [OK] Extra settings area already injected (" & $present & "/" & $MARKERS.len &
       " markers present)"
-    echo "  [PASS] No changes needed (already patched)"
-    return
-  if present > 0:
+    patchesApplied.inc
+  elif present > 0:
     echo "  [FAIL] Partial injection detected (" & $present & "/" & $MARKERS.len &
       " markers) -- refusing to patch on top; re-audit the bundle"
     quit(1)
-
-  let strictPrefix = "\"use strict\";"
-  if result.startsWith(strictPrefix):
-    result = strictPrefix & EXTRA_JS & result[strictPrefix.len .. ^1]
-    echo "  [OK] Extra settings IIFE inserted after \"use strict\""
   else:
-    result = EXTRA_JS & result
-    echo "  [OK] Extra settings IIFE prepended"
+    let strictPrefix = "\"use strict\";"
+    if result.startsWith(strictPrefix):
+      result = strictPrefix & EXTRA_JS & result[strictPrefix.len .. ^1]
+      echo "  [OK] Extra settings IIFE inserted after \"use strict\""
+    else:
+      result = EXTRA_JS & result
+      echo "  [OK] Extra settings IIFE prepended"
 
-  let found = markersPresent(result)
-  if found < MARKERS.len:
-    for m in MARKERS:
-      if m notin result:
-        echo "  [FAIL] marker missing after injection: " & m
-    echo "  [FAIL] Only " & $found & "/" & $MARKERS.len & " markers present -- aborting"
-    quit(1)
-  echo "  [OK] " & $found & "/" & $MARKERS.len & " end-state markers verified"
-  patchesApplied.inc
+    let found = markersPresent(result)
+    if found < MARKERS.len:
+      for m in MARKERS:
+        if m notin result:
+          echo "  [FAIL] marker missing after injection: " & m
+      echo "  [FAIL] Only " & $found & "/" & $MARKERS.len &
+        " markers present -- aborting"
+      quit(1)
+    echo "  [OK] " & $found & "/" & $MARKERS.len & " end-state markers verified"
+    patchesApplied.inc
+
+  # ── Sub-patch B: publish upstream's relaunch primitive ─────────────────
+  # `cdb-app:relaunch` used `app.relaunch(); app.exit(0)`, which emits neither
+  # "before-quit" nor "will-quit" and therefore skips every registered
+  # onQuitCleanup handler: the Cowork VM is killed instead of stopped, MCP child
+  # processes are cut off, and the main window's geometry is never persisted.
+  # Upstream's own primitive is
+  #   function nfi(e=[]){a.app.isPackaged?sA(!0,e):Uk(e)}
+  # where sA sets the latch that bypasses the before-quit veto interceptor,
+  # stashes the relaunch args and calls app.quit() so the cleanup pass runs and
+  # the relaunch happens at the end of it. Capture it onto globalThis so
+  # js/extra_settings_main.js (a different chunk) can reach it; that file keeps
+  # the old exit(0) path as a fallback, so a moved anchor degrades to the
+  # previous behaviour rather than a dead button.
+  block:
+    const RELAUNCH_ASSIGN = "globalThis.__cdbRelaunchApp="
+    # Idempotency must key off OUR injected END-STATE, and that end-state has to
+    # be distinguishable from any MENTION of the same global. sub-patch A has
+    # already spliced js/extra_settings_main.js into `result` by this point, and
+    # that file reads the global by name - so a bare substring search would start
+    # reporting "already patched" the day anyone writes an assignment to it
+    # there, leaving the bundle silently uncaptured on a green build. Anchor on
+    # the injection's structural neighbour instead: the closing brace of the
+    # captured function declaration immediately followed by the assignment.
+    let landedPat = re"""\}globalThis\.__cdbRelaunchApp=[\w$]+;"""
+    if result.find(landedPat).isSome:
+      echo "  [OK] relaunch capture already present (idempotent)"
+      patchesApplied.inc
+    else:
+      let relaunchPat =
+        re"""(function ([\w$]+)\(([\w$]+)=\[\]\)\{[\w$]+\.app\.isPackaged\?[\w$]+\(!0,\3\):[\w$]+\(\3\)\})"""
+      # replaceFirst can only ever answer 0 or 1, so it cannot tell us the anchor
+      # stopped being unique. Count first: a second matching site after a
+      # re-minify would mean we are guessing which one to capture.
+      let hits = result.findAll(relaunchPat).len
+      if hits != 1:
+        echo "  [FAIL] relaunchApp capture: " & $hits &
+          " matches (expected exactly 1) -- re-audit the bundle"
+        quit(1)
+      let n = replaceFirst(
+        result,
+        relaunchPat,
+        proc(m: RegexMatch): string =
+          m.captures[0] & RELAUNCH_ASSIGN & m.captures[1] & ";",
+      )
+      if n != 1 or result.find(landedPat).isNone:
+        echo "  [FAIL] relaunchApp capture did not land"
+        quit(1)
+      echo "  [OK] relaunch capture: upstream relaunchApp published as globalThis.__cdbRelaunchApp"
+      patchesApplied.inc
 
   if patchesApplied < EXPECTED_PATCHES:
     echo "  [FAIL] Only " & $patchesApplied & "/" & $EXPECTED_PATCHES &

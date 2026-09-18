@@ -2,6 +2,86 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-18
+
+### Claude Desktop v2.2553.1
+
+Upstream's first 2.x release, and a full re-minify: not one of the 157 content-hashed
+chunks in v1.49585.0 survives into the 201 of v2.2553.0, and `index.js` and
+`index.pre.js` differ too. Every patch pattern re-matched against freshly minified
+text rather than surviving by luck. Exactly one sub-patch needed re-anchoring.
+
+v2.2553.1 landed during the same pass. It re-emits every chunk hash again but is
+semantically identical where our work is pinned: the same 308 flag ids, the same 171
+managed-settings keys, the same 199 chunks and the same darwin/win32/linux gate counts,
+on the same Electron 44.2.0. All patches apply to it unchanged, so the audit below holds
+for both and `.upstream-version` records v2.2553.1.
+
+**Computer Use: the tool handler gained a state argument.** Upstream reshaped the
+internal-MCP server definition. The Computer Use server now exposes a
+`createToolHandler` that builds a per-handler state object and passes it as a new
+leading argument, so `handleToolCall` went from `(toolName, input, session)` to
+`(state, toolName, input, session)`, and the dispatcher moved onto that state as a
+memoized slot instead of being a plain `factory(session)` call.
+
+- `patches/linux/fix_computer_use_linux.nim` matches the four-argument signature, and
+  its dispatcher anchor now captures the whole init expression rather than just the
+  factory name, so the teach-mode forward reuses upstream's own memoization whatever
+  arguments that factory grows. A new assertion fails the build if the captured
+  expression does not take the session parameter.
+- `js/cu_handler_injection.js` passes the state through on the `computer_batch`
+  recursion.
+- The per-call compliance deny still has parity with upstream: the gate the handler
+  now calls in its preamble resolves to the same function the patch captures into
+  `globalThis.__cdbCuHipaa`. The Computer Use action surface is unchanged at 17
+  actions, and upstream still ships no native Linux executor, so the patch remains
+  load-bearing.
+
+**Nothing else moved against us.** No PORTABLE gate appeared, no new Linux-blocking
+gate, no reclassification: the 22 `process.platform==="linux"` sites are
+content-identical, not merely count-identical. The one platform-gated new feature,
+the `coworkCopperHeron` watch-record sub-mode, is inert on Linux, which ships neither
+the recorder provider nor the window entry it loads. One change is Linux-favourable:
+a local Claude Code session that fails for want of a sandbox now reports
+`sandbox_required_unavailable` instead of a generic crash. The eIPC sender-origin
+allowlist our Extra settings guard mirrors is unchanged, so that guard stays in sync.
+
+### Restarting from the Extra page no longer kills a running Cowork task
+
+`cdb-app:relaunch`, the restart the Extra settings page performs to apply a titlebar-mode
+switch, called `app.relaunch()` followed by `app.exit(0)`. `app.exit()` emits neither
+`before-quit` nor `will-quit`, so it skipped every one of the app's registered quit-cleanup
+handlers. The Cowork VM was killed rather than stopped, MCP child processes were cut off
+mid-flight, web storage was not flushed, and the main window's geometry was never persisted
+- which is worst precisely here, since the rows that ask the user to restart are the ones
+that change window chrome.
+
+It now calls the app's own relaunch primitive, which sets the latch that clears the
+before-quit interceptor, then quits so the full cleanup pass runs and the relaunch happens
+at the end of it. The old path remains as a fallback, so if the anchor ever moves the button
+degrades to the previous behaviour instead of doing nothing.
+
+### Computer Use on GNOME Wayland: the portal session can no longer be left running
+
+Releasing the Computer Use lock while `session-start` was still waiting on the GNOME
+RemoteDesktop consent dialog lost the update: `session-end` ran first, then the pending start
+resolved and marked the session active again with no lock held, leaving the
+`gnome-portal-bridge` daemon alive until the process exited. `_gnomeSessionEnd` now clears
+the flag on entry and awaits any in-flight start before ending the session, and publishes
+that teardown so a lock re-acquired mid-teardown queues its start behind it instead of
+opening a second portal session and a second consent dialog. That is both halves of the
+shape the KDE path already used. The session transitions are now logged, so the ordering
+is greppable in `claude-patches.log` rather than invisible, and
+`scripts/tests/linux/test-cu-gnome-session-lifecycle.mjs` pins all three orderings
+(it fails against the old code).
+
+**Baselines refreshed** against v2.2553.x: `PLATFORM_GATE_BASELINE.md`,
+`CLAUDE_FEATURE_FLAGS.md`, `CLAUDE_BUILT_IN_MCP.md` and `ION.md`. Feature flags grew
+354 to 415, the static registry 73 to 89 and the async merger 13 to 17; the
+Extra -> Deployment key catalog grew 143 to 171, including a ten-key self-hosted
+family and four session-retention keys. ion-dist is structurally unchanged and both
+of its patch sites still resolve by content signature.
+
 ## 2026-09-16
 
 ### Extra settings: the IPC sender guard now checks the origin, not just the scheme

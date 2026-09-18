@@ -456,32 +456,51 @@ proc apply*(input: string): string =
     # this object and switched the literals to backticks. Allow a short
     # brace-free property prefix rather than pinning those two keys, and accept
     # either quote style around "ccd".
+    # v2.2553.0 gave the handler a leading PER-HANDLER STATE argument: the server
+    # def now does `createToolHandler:e=>{let n={altToolModeCalls:new t.vl};
+    # return(t,r)=>Cn.handleToolCall(n,t,r,e)}`, so the signature is
+    # `(state, toolName, input, session)`. The dispatcher moved onto that state
+    # and is memoized there: `let o=e.dispatch??=xn(i,e.altToolModeCalls)`.
     let htcStart =
-      re"""(([\w$]+)=\{[^{}]{0,80}isEnabled:[\w$]+=>(?:[\w$]+\.sessionType===["`]ccd["`]\?[\w$]+(?:\.[\w$]+)?\(\):[\w$]+(?:\.[\w$]+)?\(\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
+      re"""(([\w$]+)=\{[^{}]{0,80}isEnabled:[\w$]+=>(?:[\w$]+\.sessionType===["`]ccd["`]\?[\w$]+(?:\.[\w$]+)?\(\):[\w$]+(?:\.[\w$]+)?\(\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
     let maybeHtc = content.find(htcStart)
     if maybeHtc.isNone:
       echo "  [FAIL] handleToolCall pattern: 0 matches"
       raise newException(ValueError, "  [FAIL] handleToolCall pattern: 0 matches")
     let htc = maybeHtc.get()
     let objName = htc.captures[1]
-    let toolNameParam = htc.captures[2]
-    let inputParam = htc.captures[3]
-    let sessionParam = htc.captures[4]
+    let stateParam = htc.captures[2]
+    let toolNameParam = htc.captures[3]
+    let inputParam = htc.captures[4]
+    let sessionParam = htc.captures[5]
     let injectPos = htc.matchBounds.b + 1
 
+    # Capture the WHOLE dispatcher-init expression (not just its factory name) so
+    # the teach-mode forward reuses upstream's own memoization verbatim, whatever
+    # extra arguments the factory grows.
     let afterBrace = content[injectPos ..< min(injectPos + 2000, content.len)]
-    let dispatcherPat = re(
-      "(?:const|let|var) [\\w$]+=([\\w$]+)\\(" & escapeRe(sessionParam) &
-        """\),\{save_to_disk:"""
-    )
+    let dispatcherPat =
+      re"""(?:const|let|var) [\w$]+=((?:[\w$]+\.[\w$]+\?\?=)?[\w$]+\([^()]{0,120}\)),\{save_to_disk:"""
     let maybeDispatcher = afterBrace.find(dispatcherPat)
     if maybeDispatcher.isNone:
       echo "  [FAIL] handleToolCall dispatcher not found"
       raise newException(ValueError, "  [FAIL] handleToolCall dispatcher not found")
     let dispatcher = maybeDispatcher.get().captures[0]
+    # Assert the session param is an ARGUMENT of the dispatcher call, not merely
+    # a character somewhere inside it. A bare substring test is worthless here:
+    # minified params are single letters, and `i` occurs inside
+    # `altToolModeCalls`, so it could never fail and would let a re-minify capture
+    # the wrong variable while still reporting [OK].
+    if ("(" & sessionParam & ",") notin dispatcher and
+        ("(" & sessionParam & ")") notin dispatcher:
+      echo &"  [FAIL] handleToolCall dispatcher `{dispatcher}` does not take `{sessionParam}` as its first argument"
+      raise newException(
+        ValueError, "  [FAIL] handleToolCall dispatcher does not take the session param"
+      )
     var handlerJs = LINUX_HANDLER_INJECTION_JS.strip()
     handlerJs = handlerJs.replace("__SELF__", objName)
-    handlerJs = handlerJs.replace("__DISPATCHER__", dispatcher)
+    handlerJs = handlerJs.replace("__MAKE_DISPATCH__", dispatcher)
+    handlerJs = handlerJs.replace("__STATE__", stateParam)
     handlerJs = handlerJs.replace("__TOOL_NAME__", toolNameParam)
     handlerJs = handlerJs.replace("__INPUT__", inputParam)
     handlerJs = handlerJs.replace("__SESSION__", sessionParam)

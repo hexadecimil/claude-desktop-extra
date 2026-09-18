@@ -56,7 +56,13 @@ function buildModule() {
   try { chmodSync(PATCH_BIN, 0o755); } catch {}
   const dir = mkdtempSync(join(tmpdir(), "cdb-deploy-mod-"));
   const mod = join(dir, "extra.cjs");
-  writeFileSync(mod, '"use strict";\n');
+  writeFileSync(mod,
+    '"use strict";\n' +
+    // Minimal stand-in for upstream's relaunch primitive, so the patch's
+    // relaunch-capture sub-patch has the anchor it strictly requires. Never
+    // called here; only its declaration and the appended globalThis assignment
+    // are evaluated.
+    "function nfi(e=[]){a.app.isPackaged?sA(!0,e):Uk(e)}\n");
   execFileSync(PATCH_BIN, [mod], { stdio: "ignore" });
   const src = readFileSync(mod, "utf8");
   if (!src.includes("cdb-deploy:read")) {
@@ -556,6 +562,42 @@ section("[14] the Themes panel's save target follows what is on disk");
   ok(p.call("cdb-extra:themes-list").configPath === jsonc,
      "the registry's own fixed path is still reported alongside it");
   delete globalThis.__cdbThemes;
+}
+
+// cdb-app:relaunch must PREFER upstream's own relaunch primitive. Ours used
+// app.exit(0), which emits neither "before-quit" nor "will-quit" and so skipped
+// every registered quit-cleanup handler (the Cowork VM stop, the MCP child
+// shutdowns, the window-geometry persist). The capture is published by the
+// patch as globalThis.__cdbRelaunchApp; when it is missing the handler has to
+// fall back rather than leave a dead button.
+section("[15] cdb-app:relaunch prefers upstream's relaunch primitive");
+{
+  const waitForTimer = () => new Promise(r => setTimeout(r, 400));
+
+  const p1 = install();
+  delete globalThis.__cdbRelaunchApp;
+  ok(p1.call("cdb-app:relaunch").ok === true, "the handler still answers ok when no capture is present");
+  await waitForTimer();
+  ok(p1.diag.some(m => m.includes("relaunchApp unavailable")),
+     "with no capture it says so and takes the exit(0) fallback");
+
+  const p2 = install();
+  let upstreamCalls = 0;
+  globalThis.__cdbRelaunchApp = () => { upstreamCalls++; };
+  ok(p2.call("cdb-app:relaunch").ok === true, "and answers ok when the capture IS present");
+  await waitForTimer();
+  ok(upstreamCalls === 1, "upstream's relaunchApp is called exactly once", String(upstreamCalls));
+  ok(!p2.diag.some(m => m.includes("relaunchApp unavailable")),
+     "and the fallback is NOT reported");
+
+  // A throwing capture must not strand the user: fall back, and say why.
+  const p3 = install();
+  globalThis.__cdbRelaunchApp = () => { throw new Error("boom"); };
+  p3.call("cdb-app:relaunch");
+  await waitForTimer();
+  ok(p3.diag.some(m => m.includes("falling back")),
+     "a capture that throws is reported and falls back rather than dying silently");
+  delete globalThis.__cdbRelaunchApp;
 }
 
 console.log("\n" + (fail ? `${pass} passed, ${fail} FAILED` : `ALL ${pass} CHECKS PASSED`));

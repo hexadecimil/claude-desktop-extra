@@ -65,6 +65,7 @@ These files embed assumptions about upstream internals and **must be challenged 
 | `README.md` | Feature descriptions, and the three-bullet patch summary with its per-directory counts (the tables themselves live in `PATCHES.md`). **NOT** install command version numbers - those are updated automatically by CI. | Review after patches are fixed |
 | `baseline/CLAUDE_BUILT_IN_MCP.md` | Built-in MCP server names, registration patterns | Check `registerInternalMcpServer` calls in new JS |
 | `js/extra_settings_main.js` (`__cdbEx_DEPLOY_KEYS`) | The managed-settings key catalog the Extra → Deployment panel renders, pinned from the bundle's own zod schema. A key upstream removes keeps being offered; a key it adds is missing. Also the faithful port of the 3p-dir resolver and the mode decision | ``rg -ao 'flatKey:[`"][A-Za-z0-9_]+[`"]' tmp/app.asar.contents/.vite/build/index.pre.js \| sort -u`` (the minifier emits backtick strings since v1.26832.0) and diff against the catalog; `node scripts/tests/core/test-deployment-main.mjs` asserts the shape |
+| `kwin-portal-bridge/src/teach_overlay.rs` (`TeachStepPayload`) | The **only** place our Computer Use bridges are pinned to upstream DATA rather than to our own executor abstraction. `js/executor_linux.js` forwards upstream's teach-step payload to the bridge verbatim (`JSON.stringify(payload \|\| {})`, no field mapping), and the Rust side deserializes it with `explanation` **required**. An upstream rename is a runtime serde failure on a green build, on KDE Wayland only. Note this repo is **mosi0815's**, not ours - fixes go through a PR to `mosi0815/kwin-portal-bridge`. | ``grep -ao 'onTeachStep({[^}]*}' <new-bundle-concat>`` and confirm the emitted keys are still `explanation` / `nextPreview` / `anchorLogical` |
 | `baseline/PANEL_TABS_ANCHORS.md` | Panel-tabs DOM/fiber anchors: the row shape, `MAX_CHAIN_HOPS`, the literal `"chat"` tile id, the label->tileId map (upstream's `Browser` is tile `preview`), the Session-actions menu, and the runtime warnings that mean an anchor moved | Re-run the console recipes in that file against the new build; every `[cdb-tabs]` warning key listed there names the anchor that broke |
 | `baseline/FILES_QUICK_OPEN_ANCHORS.md` | Files quick-open anchors: the `data-perf-screen="file"` pane, the tree rows, the `Show file tree` toolbar button, the fiber `onPreview(path, line)` handler with its `root` prop, the `entry` props, the `fetchMentionOptions` result shape, and the `[cdb-qopen]` warning keys | Re-run the console recipes in that file against the new build; also re-check the `FileIndexHost.search` anchor of `add_feature_files_quick_open_worker.nim` (`grep -o 'of this\.index\.search(' fileIndexWorker.js` must hit exactly once before patching). The worker-host fork that carries the `CDB_FILES_QUICK_OPEN` gate (``grep -oE 'utilityProcess\.fork\([^)]{0,120}\)' index*.js``) needs no manual check - `add_feature_files_quick_open.nim` sub-patch B rewrites it to pass `env:Object.assign({},process.env)` and its strict count (exactly one match) fails the build if the shape moves |
 | `baseline/ION.md` | ion-dist SPA bundle stats, patched patterns, config key schema | Run ion-dist checks (Prompt 4 in update-prompt.md) |
@@ -332,15 +333,15 @@ git push
 ```
 patches/           # Nim patch sources (.nim) + Makefile, compiled to native binaries (ls patches/*/*.nim)
 patches/linux/     #   Linux compatibility - always on, not user-configurable (31)
-patches/community/ #   Opt-in features, each with a switch in Settings -> Extra -> Community Features (9)
+patches/community/ #   Opt-in features, each with a switch in Settings -> Extra -> Community Features (10)
 patches/core/      #   Always-on infrastructure the rest builds on: the Extra settings pages, the theme
                    #   engine, the GrowthBook override mechanism, multi-profile plumbing (7)
 js/                # Shared JS snippets embedded by Nim patches via staticRead ("../../js/..." from a patch)
 scripts/           # Build, validation, and launcher scripts (ls scripts/)
 scripts/tests/     # Feature test harnesses, grouped like patches/ (run: scripts/run-feature-tests.sh)
-scripts/tests/community/ #   Behavior tests for the opt-in community features (8)
-scripts/tests/core/      #   Behavior tests for the core infrastructure features (5)
-scripts/tests/linux/     #   Behavior tests for the Linux compatibility patches (2)
+scripts/tests/community/ #   Behavior tests for the opt-in community features (9)
+scripts/tests/core/      #   Behavior tests for the core infrastructure features (7)
+scripts/tests/linux/     #   Behavior tests for the Linux compatibility patches (5)
 scripts/tests/lib/       #   Shared harness plumbing (theme-engine-harness.mjs), not tests themselves
 docs/              # Per-feature deep-dives (themes, profiles, quick-entry, cowork, feature-flags,
                    #   computer-use, third-party-inference, environment-variables) + screenshots.

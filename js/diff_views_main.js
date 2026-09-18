@@ -52,8 +52,8 @@
  *
  * Channel matching is SUFFIX-based ("..._$_LocalSessions_$_getGitDiff"): the
  * full literal embeds a codegen UUID
- * ($eipc_message$_e2afa475-a4a7-4b20-823a-d301e4191c67_$_claude.web_$_...)
- * that can change per release.
+ * ($eipc_message$_<uuid>_$_claude.web_$_...) that changes per release - it went
+ * af60bfbd-... -> a19a1434-... in v2.2553.0 alone.
  *
  * ------------------------------------------------------------
  * VERIFIED HANDLER CONTRACTS (1.24012.9) - all results are `T | null`, all

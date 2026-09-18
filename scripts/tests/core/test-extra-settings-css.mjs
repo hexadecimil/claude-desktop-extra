@@ -65,7 +65,13 @@ function buildModule() {
   try { chmodSync(PATCH_BIN, 0o755); } catch {}
   const dir = mkdtempSync(join(tmpdir(), "cdb-css-mod-"));
   const mod = join(dir, "extra.cjs");
-  writeFileSync(mod, '"use strict";\n');
+  writeFileSync(mod,
+    '"use strict";\n' +
+    // Minimal stand-in for upstream's relaunch primitive, so the patch's
+    // relaunch-capture sub-patch has the anchor it strictly requires. Never
+    // called here; only its declaration and the appended globalThis assignment
+    // are evaluated.
+    "function nfi(e=[]){a.app.isPackaged?sA(!0,e):Uk(e)}\n");
   execFileSync(PATCH_BIN, [mod], { stdio: "ignore" });
   const src = readFileSync(mod, "utf8");
   if (!src.includes("web-contents-created")) {

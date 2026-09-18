@@ -1,5 +1,16 @@
 # Built-in MCP Servers - Claude Desktop v1.13576.0
 
+> **Roster re-verified against v2.2553.0** (2026-09-18): registration mechanism unchanged - `registerInternalMcpServer` still present with exactly one registration, exported as `registerInternalMcpServer:()=>wxe` in `index.chunk-BHnyA0sz.js`. **Two structural changes and the biggest roster growth since the `ccd_*` family started:**
+>
+> 1. **Server definitions may now supply `createToolHandler` instead of `handleToolCall`.** `InternalMcpServerManager` resolves the per-session handler as ``let p=u.createToolHandler?u.createToolHandler(e):(...e)=>u.handleToolCall(...e)``. The computer-use server uses it to hold per-session state: ``{serverName:t.Fx,tools:o,isEnabled:Cn.isEnabled,createToolHandler:e=>{let n={altToolModeCalls:new t.vl};return(t,r)=>Cn.handleToolCall(n,t,r,e)}}``, i.e. its `handleToolCall` takes a leading state object. `altToolModeCalls` is a run-serializer with `.run(onStart,fn)` -> `{result,answeredByAltToolMode}`, `.timeLimitPassed` and `.anyRunning`; the CU dispatcher reads the last two for `isAborted()` and `getPointerActionsBackToBack()`. Computer-use is the **only** server that supplies `createToolHandler` - every other def still uses `handleToolCall`. `getDynamicTools(sessionCtx)` (already supported) is used by 7 server defs, up from 5: `ccd_directory`, `ccd_host`, `ccd_session_mgmt`, `ccd_view`, `terminal` (its extra tools are gated on `terminalsOnHost===!0`), the iOS-simulator server, and the 3p branch of `plugins`.
+> 2. **The hardcoded reserved-server-name array is gone.** The reserved-prefix list is derived from the server-uuid map: ``dir=[...Object.keys(yBe),...cir]``, minus `lir`, minus ``fir=new Set(["terminal","workspace","office","visualize"])``, plus ``uir=["Claude_for_Chrome"]`` -> `mir`, and `Lir=[...new Set(mir.map(Iir))]` backs the `vq()` collision check that drops user MCP servers whose name or uuid collides (log text still names `reservedServerNames.ts`). A new server therefore no longer needs a matching literal in a hand-written array - **the server-uuid map is the roster's single source of truth.**
+>
+> **Server-uuid map: 24 -> 29 entries.** Added `ccd_connectors:"5b0f8f6c-2f0a-4d6b-9a51-3c2c9d7e4a18"`, `ccd_host:"c7226828-f75a-4818-bb9a-2f4abf6467ea"`, `ccd_view:"6f4f70a3-2c58-4f8e-9d7a-3b1c5e2a9c41"`, `ccd_settings:"2b7c91e4-5d3a-4f6e-8c1b-9a0d7e3f5b62"` and `"scheduled-tasks":"13d93732-2129-4781-a001-691c71b69d63"` (the server already existed; only its uuid entry is new). No entry was removed and no uuid changed. **Four new backend servers, none with a platform check, all available on Linux:** `ccd_connectors` (#26), `ccd_host` (#27), `ccd_view` (#28), `ccd_settings` (#29). **Three existing servers gained tools:** `terminal` grew from 1 tool to 4 (`run_in_terminal`, `open_terminal_tab`, `list_terminal_tabs` alongside `read_terminal`), `ccd_session` gained `move_to_cloud` and `list_start_targets`, `ccd_session_mgmt` gained `set_session_permission_mode` and `delete_session` as dynamic tools. Nothing was removed or renamed. `mcp__conversation__reply` appears in the bundle only as a system-prompt instruction - that server is served by the Claude Code CLI, not by the desktop's internal-MCP registry.
+>
+> **GrowthBook reader renamed and re-split.** The single `t.pk("<id>")` reader is gone; the flag-read family is now `t.bI("<id>")` (211 calls), `t.vI` (40), `t.xI("<id>",!0)` (39, the two-argument default-carrying variant every new `ccd_*` gate uses), `t._I` (16), `t.wI` (5), `t.TI` (3). New gate flags: `ccd_view` `2161994580`, `ccd_settings` `2057990550`, `ccd_host` `2696933583`.
+>
+> **Counting method (v2.2553.0)** - audit concat = `cat .vite/build/index*.js` (201 files: `index.pre.js` + `index.js` + 199 `index.chunk-*`; no `index2` family). Use GNU `grep -a` or python; `rg -a` can silently return nothing on these bundles. `grep -aoF 'serverName:' "$CONCAT" | wc -l` -> **136** (120 on v1.49585.0); `grep -aoE 'mcp__[a-zA-Z0-9_-]+__[a-zA-Z0-9_-]+' "$CONCAT" | wc -l` -> **82** (78), `| sort -u | wc -l` -> **55 unique** (51). The four new unique literals are `mcp__ccd_session__list_start_targets`, `mcp__ccd_session_mgmt__list_events`, `mcp__ccd_view__show_pane` and `mcp__conversation__reply`; every other new tool id is a template literal and invisible to that grep, so diff the server-uuid map as well. Bundled 3p servers are byte-identical to v1.49585.0: `office365-mcp-stdio.mjs` 7,215,327 B (with `pdfExtractorProcess.mjs` 425,295 B and `pdf.worker.mjs` 1,089,813 B) and `github-mcp/github-mcp-server` 19,931,320 B. Chunk stats: `index.chunk-*` 155 -> 199, `index.pre.js` 898,617 -> 1,009,239 B, packaged `app.asar` 36,978,807 -> 39,356,654 B; `@anthropic-ai/claude-agent-sdk` 0.3.260 -> 0.3.274; bundled Electron 44.2.0 (unchanged).
+>
 > **Roster re-verified against v1.49585.0** (2026-09-09): registration mechanism unchanged - `registerInternalMcpServer` still present with exactly one registration, now exported as `registerInternalMcpServer:()=>A_e` in `index.chunk-EgDgo76G.js`. **Roster grew again - one new backend server and one new per-session SDK-type server, neither with a platform check, both available on Linux:** (1) **`ccd_window`** (#25 below, `index.chunk-D4n72M0W.js`) - 4 tools `open_session_in`, `close_split`, `set_sidebar_collapsed`, `get_window_layout`; `isEnabled:e=>e.sessionType==="ccd"&&ss()` with `ss=()=>t.pk("3076393065")` (GrowthBook, flag id new this release). It drives the renderer through a new eIPC service **`WindowLayout`** (methods `setLayoutCommandListening`, `reportLayoutCommandResult`; events `command`, `layoutCommand`; log prefix `[ccd_window]`). (2) **`memory` cloud-memory relay** for cowork sessions (see "Cloud memory relay" under Per-Session Dynamic MCP Servers; `index.chunk-CSphapxR.js`, log prefix `[memoryMcpServer]`) - an in-process SDK server named `memory` that proxies `tools/list` and `tools/call` to `POST /v2/ccr-sessions/-/memory/mcp` on the API host and exposes only **`memory_read`** and **`memory_list`** (flat literals `mcp__memory__memory_read` / `mcp__memory__memory_list` now appear in the read-only tool allowlist). Gated by `t.pk("946844604")&&t.WN().canSyncCoworkMemoryRemotely()&&!t.zS()` - GrowthBook flag (new this release) AND first-party account (the 3p provider class returns `canSyncCoworkMemoryRemotely(){return!1}`) AND not HIPAA; skipped when the session's `memoryEnabled===!1`. If a user-configured MCP server is already named `memory` it is replaced (warn-logged). The known-server-name enum array grew **19 -> 20** (`+ccd_window`), now ``["claude_in_chrome","claude_browser","claude_preview","claude_code_ios_simulator","claude_code_android_emulator","computer_use","framebuffer","plugins","skills","mcp_registry","scheduled_tasks","cowork","session_info","dispatch","remote_devices","ccd_directory","ccd_session","ccd_pr","ccd_sidebar","ccd_window"]``; the server-uuid map gained `ccd_window:"56285402-9c8c-4c2c-b47b-2f3e9ba5d210"`. No server or tool was removed or renamed. Server-name literal counts identical for 25/27 roster names; the drifters are `ccd_window` 0 -> 2 (the constant plus the enum entry) and `cowork` 126 -> 127 (a non-registration call site); `memory` 18 -> 24 (the relay module). The cowork chunk also gained a template-literal list of the four **write-side** memory tool ids (``mcp__${KT}__memory_write`` / `memory_str_replace` / `memory_append` / `memory_delete`) used only as a never-auto-approve set for scheduled tasks - those tools are served by the VM-side Claude Code memory implementation, not by the relay. The bundled Microsoft 365 server was **renamed `office365-mcp.mjs` -> `office365-mcp-stdio.mjs`** and shrank 7,322,713 -> 7,215,327 B (`pdfExtractorProcess.mjs` 425,295 B and `pdf.worker.mjs` 1,089,813 B unchanged); its **tool-name inventory is unchanged**, it still sets `process.env.MCP_TRANSPORT="stdio"` itself (the old file did too) and is still spawned through `mcp-runtime/nodeHost.js` - the main bundle's spawn constant is now `"office365-mcp-stdio.mjs"`. Chunk stats: `index.chunk-*` 158 -> 155, `index.pre.js` 891,104 -> 898,617 B, packaged `app.asar` 36,619,584 -> 36,978,807 B; `@anthropic-ai/claude-agent-sdk` 0.3.260 -> 0.3.265; bundled Electron 42.10.0 -> 44.2.0.
 >
 > **Counting method (v1.49585.0)** - same commands as v1.46388.2 on the concat of `.vite/build/index*.js` (157 files): `grep -aoF 'serverName:' | wc -l` -> **120** (119 on v1.46388.2; the +1 is the `ccd_window` registration); `grep -aoE 'mcp__[a-zA-Z0-9_-]+__[a-zA-Z0-9_-]+' | wc -l` -> **78** (76), `| sort -u | wc -l` -> **51 unique** (49; the +2 are `mcp__memory__memory_read` and `mcp__memory__memory_list`). The `ccd_window` tool ids are template literals and do NOT appear in the flat grep - the enum array and the `serverName:` count are what flagged it.
@@ -58,6 +69,23 @@ iAe(serverName, displayLabel, factoryFn)   // v1.12603.0 (was KqA() in v1.11847.
 - UUID display label sent to renderer for identification
 - `s9()` (v1.12603.0; was `J3()` in v1.11847.5, `b3()` in v1.11187.4, `k4()` before) enumerates registered server names via `Object.keys(YL)`
 - Signature unchanged: `(serverName, displayLabel, factoryFn)`
+
+### Backend server-definition shape
+
+`InternalMcpServerManager` consumes plain objects of this shape (v2.2553.0):
+
+```js
+{
+  serverName,                       // string, keys the server-uuid map
+  tools,                            // static tool list
+  getDynamicTools?: sessionCtx => [],  // tools that depend on the session
+  isEnabled: sessionCtx => boolean,
+  handleToolCall?: (...args) => result,
+  createToolHandler?: sessionCtx => handler  // takes precedence over handleToolCall
+}
+```
+
+The manager resolves the handler once per session: ``let p=u.createToolHandler?u.createToolHandler(e):(...e)=>u.handleToolCall(...e)``, and builds the tool list as ``[...u.tools,...u.getDynamicTools?.(e)??[]]``. `createToolHandler` lets a server keep per-session state; computer-use uses it to carry an `altToolModeCalls` run-serializer, which shifts its `handleToolCall` signature to `(state, tool, args, session)`.
 
 ## Renderer-Facing Servers (via `LYA()`)
 
@@ -232,7 +260,7 @@ Browser interaction (30-second timeout each):
 
 | Field | Value |
 |-------|-------|
-| Server name | `"terminal"` (constant `gCr`) |
+| Server name | `"terminal"` (constant `kW` in v2.2553.0) |
 | Factory | `ECr()` via `getTerminalServerDef` |
 | Platform | **All** (macOS, Windows, Linux) - upstream **dropped** the old `pj` (darwin\|\|win32) platform gate; `isEnabled` is now `sessionType==="ccd"&&!isSSH` with no platform check |
 | Gating | `t.sessionType === "ccd"` AND `!t.isSSH` AND server flag `397125142` (no platform gate as of v1.17377) |
@@ -240,9 +268,16 @@ Browser interaction (30-second timeout each):
 | Backend | `node-pty` - spawns a PTY shell, streams output to xterm.js terminal panel in the UI. node-pty ships pre-built for Linux in the official `.deb` |
 | Linux status | **Works natively** - no platform gate remains; the old `fix_dispatch_linux.nim` `pj` patch is removed (patch deleted; Dispatch/terminal upstream-native on Linux) |
 
-| Tool | Description |
-|------|-------------|
-| `read_terminal` | Read the last ~200 lines of the integrated terminal panel (ANSI codes stripped). Use when the user references test output, errors, or logs visible in their terminal. Returns error if terminal panel is not open |
+**Tools (4):**
+
+| Tool | Constant | Description |
+|------|----------|-------------|
+| `read_terminal` | `z1n` | Read the last ~200 lines of the integrated terminal panel (ANSI codes stripped). Use when the user references test output, errors, or logs visible in their terminal. Returns error if terminal panel is not open |
+| `run_in_terminal` | `B1n` | Type a command into the session's terminal panel and run it. The command is syntax-checked in the host's login shell first (`zsh`/`bash`/`sh` only - anything else is refused with "use the Bash tool") |
+| `open_terminal_tab` | `V1n` | Open a new terminal tab for the session (capped at `Z1n` = 2000 characters of input; the model is told when the session already has many open tabs) |
+| `list_terminal_tabs` | `H1n` | List the session's terminal tabs |
+
+`run_in_terminal` and `open_terminal_tab` carry a `_consent` field (`K1n`) and are approval-gated. On an SSH session the approval must be given in the Claude app on the user's own computer - an approval routed through Remote Control is refused.
 
 **Why not in Cowork?** In Cowork sessions, the model has `mcp__workspace__bash` which runs shell commands directly on the host (on Linux - no sandbox). This is strictly more powerful than `read_terminal` (which can only *read* the terminal panel, not execute commands). The terminal server is designed for CCD sessions where the model observes a user-controlled terminal rather than running its own commands.
 
@@ -334,8 +369,12 @@ An AI-powered inbox scanner that reads from user's remote MCP servers (Gmail, Sl
 | `spawn_task` | Spin off a parallel task into a separate Claude Code Desktop session |
 | `dismiss_task` | Dismiss a spawned task (present since at least v1.40609.0; was missing from this table) |
 | `mark_chapter` | Flag an out-of-scope issue for a separate background task |
-| `start_session` | **New in v1.46388.2.** Start a separate Claude Code session for a task while staying with the user; `initiation` says who wants it (`user_asked` starts it now and returns its id). Flag `2371478310` |
-| `hand_off_to_session` | **New in v1.46388.2.** Hand the current conversation off to another session. Flag `2371478310` |
+| `start_session` | Start a separate Claude Code session for a task while staying with the user; `initiation` says who wants it (`user_asked` starts it now and returns its id, `own_initiative` only proposes it and the card expires after `__` days). Flag `2371478310` |
+| `hand_off_to_session` | Hand the current conversation off to another session. Flag `2371478310` |
+| `list_start_targets` | List the targets a new session can be started on (local, remote/SSH, cloud), with the `cwd`, `environment`, `sourceBranch`, `branchName` and `preset` each one accepts |
+| `move_to_cloud` | Move this session to a cloud target. Backed by the new `claude.web/CloudMove` eIPC service (`setCloudMoveListening`, `reportCloudMoveResult`, event `cloudMoveCommand`) |
+
+Constants in v2.2553.0: `r_="ccd_session"`, `i_="spawn_task"`, `a_="dismiss_task"`, `o_="mark_chapter"`, `s_="start_session"`, `c_="hand_off_to_session"`, `l_="move_to_cloud"`, `u_="list_start_targets"`; the gate is ``h_=()=>t.bI("2371478310")``.
 
 The `spawn_task` tool requires desktop approval card injection - cannot be auto-approved by hooks or permission rules.
 
@@ -410,7 +449,14 @@ Infrastructure for future remote display/VM framebuffer control. Currently disab
 | `list_events` | List a session's events |
 | `archive_session` | Archive a CCD session |
 | `set_session_title` | Rename a session (emits `ccdSessionRenamed`) |
-| `send_message` | Deliver a message to another session (flat literal `mcp__ccd_session_mgmt__send_message` since v1.46388.2; 7 tools total, all present since at least v1.40609.0) |
+| `send_message` | Deliver a message to another session (flat literal `mcp__ccd_session_mgmt__send_message` since v1.46388.2) |
+
+Two further tools are supplied through `getDynamicTools` (`[...Au(),...ju()]`), so they appear only for sessions that qualify. Constants: `XNr="ccd_session_mgmt"`, `ZNr="delete_session"`, `QNr="set_session_permission_mode"`.
+
+| Tool | Description |
+|------|-------------|
+| `set_session_permission_mode` | Change another session's permission mode. Accepts `default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`; the rank table `GNr` (`plan` 0, `default`/`dontAsk` 1, `acceptEdits` 2, `auto` 3, `bypassPermissions` 4) refuses any move that raises privilege above the caller's `current_mode`, and the call carries a `_consent` field |
+| `delete_session` | Delete a CCD session. Always approval-gated (`g$()` lists it with the worktree-destroying `ccd_host` tools) |
 
 ### 22. Window Halo
 
@@ -486,6 +532,74 @@ Lets a Code session arrange the desktop's window layout - typically to show a se
 | `close_split` | Close a split pane that this session opened (never one the user arranged) |
 | `set_sidebar_collapsed` | Collapse or expand the main window's sidebar |
 | `get_window_layout` | Read-only description of the current tab, split panes, pop-outs, sidebar state, and where this session is showing |
+
+### 26. CCD Connectors
+
+| Field | Value |
+|-------|-------|
+| Server name | `"ccd_connectors"` (constant `Hr` in v2.2553.0) |
+| Gating | `isEnabled:e=>e.sessionType==="ccd"&&e.sessionConnectors!==void 0&&!t.UI()` - CCD sessions that carry a `sessionConnectors` handle, and not under the HIPAA gate. **No platform check**, works on Linux |
+| Added in | v2.2553.0 |
+
+Lets a Code session read and drive its own connector (MCP server) set - the same switches as the Connectors submenu of the composer's `+` menu and the `/mcp` panel. `session_connectors_status` and `reconnect_session_connector` are refused when the session was dispatched by a remote orchestrator; an organisation policy can disable the whole server with a refusal text that also tells the model not to offer connecting anything. Changes apply when the current turn ends, so the model must end its turn and re-check status. Tool ids are template literals.
+
+| Tool | Description |
+|------|-------------|
+| `session_connectors_status` | List the MCP servers available to this session and their state: claude.ai connectors (kind `connector`), plugin-provided servers, project `.mcp.json` and user-config servers, desktop extensions. Each row has `connected`, `needs_auth`, `failed`, `pending` or `disabled`, plus `tool_count` when connected |
+| `set_session_connector_enabled` | Turn one claude.ai connector on or off for this session (also becomes the default for new sessions). `connector` rows only - plugin, project and desktop servers are managed elsewhere |
+| `reconnect_session_connector` | Re-dial a `connector` row whose status is `failed`, like the Reconnect button in `/mcp` |
+
+### 27. CCD Host
+
+| Field | Value |
+|-------|-------|
+| Server name | `"ccd_host"` (constant `h$` in v2.2553.0) |
+| Gating | `isEnabled:e=>e.sessionType==="ccd"&&e.isUnattendedSession!==void 0&&!e.isUnattendedSession()&&Ao()` with ``Ao=()=>t.xI("2696933583",!0)`` (GrowthBook) - attended CCD sessions only. **No platform check**, works on Linux |
+| Added in | v2.2553.0 |
+
+Lets a Code session act on the machine the desktop app runs on: hand work back to the user's own tools, and manage the disk the app's Code sessions occupy. Three tools are static; the three storage tools come from `getDynamicTools` (`Ma()`) and appear only while the app's storage feature is on (`ha()`). Telemetry: `desktop_ccd_host_handoff` and `desktop_ccd_host_storage`; log prefix `[ccd_host]`.
+
+| Tool | Constant | Description |
+|------|----------|-------------|
+| `open_in_editor` | `So` | Open a file from the session's project in the user's code editor (VS Code, Cursor, Windsurf or Zed - the one behind the app's "Open in" menu), optionally at a line and column |
+| `reveal_path` | `Co` | Show a file or folder in the system file manager, selected inside its parent folder. Unavailable for sessions on a remote machine |
+| `request_keep_awake` | `wo` | Keep the computer from idle-sleeping past the current turn (`until: "turn_end"` or `"session_idle"`, plus a one-sentence `reason`). Holds are released on stop, archive or quit, capped by `aa`, and suspended when the user's keep-awake setting is off |
+| `get_storage_usage` | `t.$l` | Report the disk the app's Code sessions use, as Settings > Desktop app > Storage shows it: worktrees (in use, idle and removable, or kept after archiving because they hold uncommitted changes), conversation history, session records, scratch workspaces, installed Claude Code versions, app caches |
+| `clean_up_worktrees` | `t.Zl` | Free worktrees held by sessions inactive for 30, 60 or 90 days. Approval-gated through a preview card that expires after ten minutes |
+| `discard_kept_worktree` | `t.Ql` | Delete the worktree an archived session left on disk, discarding its uncommitted changes. Approval-gated |
+
+`clean_up_worktrees` and `discard_kept_worktree` sit in the destructive set `LNr`; SSH and WSL sessions are refused outright with a message pointing the user at Settings.
+
+### 28. CCD View
+
+| Field | Value |
+|-------|-------|
+| Server name | `"ccd_view"` (constant `xm` in v2.2553.0) |
+| Gating | `isEnabled:e=>e.sessionType==="ccd"&&Dm()` with ``Dm=()=>t.xI("2161994580",!0)`` (GrowthBook) - **no platform check**, works on Linux |
+| Added in | v2.2553.0 |
+
+Lets a Code session show its own side panes in the user's view. `tools` is empty; the whole list comes from `getDynamicTools:e=>Ym(e?.offersArtifactPane?.()===!0)`, so the set of addressable panes depends on whether the session offers an artifact pane. `mcp__ccd_view__show_pane` is the one flat literal; the other two ids are template literals.
+
+| Tool | Description |
+|------|-------------|
+| `show_pane` | Show one of the session's side panes beside the conversation: `diff` (optional `path` scrolls to a file, `diff_scope` picks branch changes, uncommitted changes, or one commit), `file` (`path` plus `line`, restricted to the working directory or a granted folder), `terminal`, `pr` |
+| `close_pane` | Close one of the session's side panes. No-op when it is not open or the session is not on screen |
+| `get_layout` | Report where the session is on screen (main window, split pane, pop-out) and which side panes are open. An empty `views` list means the session is not open anywhere |
+
+### 29. CCD Settings
+
+| Field | Value |
+|-------|-------|
+| Server name | `"ccd_settings"` (constant `VNr` in v2.2553.0; the server def reads it as `t.Kl`) |
+| Gating | `isEnabled:e=>e.sessionType==="ccd"&&e.isUnattendedSession!==void 0&&!e.isUnattendedSession()&&Yf()` with ``Jf="2057990550",Yf=()=>t.xI(Jf,!0)`` (GrowthBook) - attended CCD sessions only. **No platform check**, works on Linux |
+| Added in | v2.2553.0 |
+
+Lets a Code session read and change the user's Code-tab preferences. Every write goes through a consent card redeemed by tool-use id (`Gf.redeem`); a `set_setting` that arrives without consent is refused and warn-logged as ``[ccd_settings] set_setting <key> for <sessionId> arrived without consent; refusing``. Security and trust settings - permission modes, sandboxing, browser tools, allowed sites, trusted hosts, computer use - are read-only here and stay the user's to change in Settings.
+
+| Tool | Description |
+|------|-------------|
+| `get_settings` | Read the Code-tab preferences: session auto-archiving, branch prefix, notifications, keep-awake, the Remote Control default for new sessions, default output style. Each key comes back with its current value, the values `set_setting` accepts, one line of purpose, and a reason when it is locked |
+| `set_setting` | Change exactly one settable key by its `get_settings` name (for example `auto_archive_on_pr_close`). Applied via `c.apply(value,{applyInRenderer})`, and the reply tells the user where to change it back |
 
 ## Per-Session Dynamic MCP Servers (SDK-type)
 

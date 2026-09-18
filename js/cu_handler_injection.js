@@ -3,7 +3,7 @@ if(process.platform==="linux"){
 // block returns before). Patch 11 publishes the captured HIPAA gate; unset (older shapes) = no check.
 if(typeof globalThis.__cdbCuHipaa==="function"&&globalThis.__cdbCuHipaa()){(globalThis.__cdbDiag||console.log)("[claude-cu] tool call denied: organization compliance settings");return{isError:!0,content:[{type:"text",text:"Computer Use isn't available under your organization's compliance settings. If you recently switched organizations, restart the app."}]}}
 var __lxTeachTools=["request_teach_access","teach_step","teach_batch"];
-if(__lxTeachTools.indexOf(__TOOL_NAME__)>=0){const __n=__DISPATCHER__(__SESSION__);const{save_to_disk:__sd,...__s}=__INPUT__;return await __n(__TOOL_NAME__,__s)}
+if(__lxTeachTools.indexOf(__TOOL_NAME__)>=0){const __n=__MAKE_DISPATCH__;const{save_to_disk:__sd,...__s}=__INPUT__;return await __n(__TOOL_NAME__,__s)}
 if(__TOOL_NAME__==="request_access"){var __apps=__INPUT__.apps||[];
   // Dedup grants by a normalized key so multiple spellings of one app
   // (e.g. "Sublime Text" and "sublime_text") collapse to a single grant.
@@ -91,7 +91,7 @@ case"computer_batch":{
   for(var __bi=0;__bi<__actions.length;__bi++){
     var __ba=__actions[__bi],__bact=__ba.action||__ba.type;
     var __br;
-    try{__br=await __SELF__.handleToolCall(__bact,__ba,__SESSION__)}
+    try{__br=await __SELF__.handleToolCall(__STATE__,__bact,__ba,__SESSION__)}
     catch(__be){__br={content:[{type:"text",text:__bact+" threw: "+(__be&&__be.message||__be)}],isError:!0}}
     __done.push({action:__bact,inner:__br||{content:[]}});
     if(__br&&__br.isError){__failIdx=__bi;break}

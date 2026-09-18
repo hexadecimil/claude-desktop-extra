@@ -195,6 +195,11 @@ async function _wlBridgeCallAsync(args,timeoutOverrideMs){
 // having fired — and by then a consent dialog is expected UX anyway (the user
 // invoked Computer Use).
 function _gnomeEnsureSessionSync(){
+  // A teardown in flight owns the session: do not race a second blocking
+  // session-start (and a second consent dialog) into it. This path cannot await,
+  // so it reports "not up" and the caller fails soft, which is what it already
+  // does whenever the portal is not ready.
+  if(_gnomeSessionEnding)return !1;
   if(_gnomeSessionActive||_gnomeSessionStarting)return _gnomeSessionActive;
   if(_gnomePortalDown())return !1;
   var bin=_gnomeBridgeBin();if(!bin)return !1;
@@ -235,29 +240,70 @@ async function _wlMonForRegion(x,y){
 // kwin and regular mode). If the lock hook never fires we lazy-start on the
 // first PORTAL command (input/capture — see _gnomePortalCmds; never for
 // enumeration) and stop on process exit as a backstop.
-var _gnomeSessionActive=!1,_gnomeExitHooked=!1,_gnomeSessionStarting=null;
+var _gnomeSessionActive=!1,_gnomeExitHooked=!1,_gnomeSessionStarting=null,_gnomeSessionEnding=null;
 async function _gnomeSessionStart(){
   var bin=_gnomeBridgeBin();if(!bin)return;
   try{await _bridgeAsync(bin,["session-start"],GNOME_SESSION_START_MS);_gnomeSessionActive=!0;_gnomePortalClearDown();globalThis.__cdbDiag("[claude-cu] gnome-portal-bridge session started")}
   catch(e){globalThis.__cdbDiag("[claude-cu] gnome-portal-bridge session-start failed: "+(e.message||e));_gnomePortalMarkDown("session-start failed")}
 }
+// Stop the portal session. Mirrors stopBridgeSession() in js/executor_linux.js,
+// BOTH halves of it: clear the flag synchronously on entry so the last caller
+// wins, AND publish _gnomeSessionEnding so the ensure paths serialise against a
+// teardown in progress. Without the await, a lock released while session-start
+// is still parked on the XDG RemoteDesktop consent dialog (up to
+// GNOME_SESSION_START_MS) loses the update: session-end runs first, then the
+// start resolves and re-sets _gnomeSessionActive=!0 with no lock held, leaving
+// the bridge daemon alive until the process.once("exit") backstop. Without the
+// _gnomeSessionEnding latch, the window where both flags are clear (which spans
+// two awaits, so up to ~45s) lets _gnomeEnsureSessionSync past its guard and
+// start a SECOND session - a blocking session-start on the main process plus a
+// second consent dialog - which this teardown would then rip out from under the
+// command that asked for it.
 async function _gnomeSessionEnd(){
-  var bin=_gnomeBridgeBin();if(!bin)return;
-  try{await _bridgeAsync(bin,["session-end"],15000)}catch(e){}
-  _gnomeSessionActive=!1;_gnomeSessionStarting=null;
+  if(_gnomeSessionEnding)return _gnomeSessionEnding;
+  var bin=_gnomeBridgeBin();
+  _gnomeSessionActive=!1;
+  if(!bin){_gnomeSessionStarting=null;return}
+  var starting=_gnomeSessionStarting;_gnomeSessionStarting=null;
+  _gnomeSessionEnding=(async function(){
+    // Log the interesting transition: a release that arrived while the consent
+    // dialog was still up. Without this the whole interleaving is invisible in
+    // claude-patches.log, which is where a user's report has to be diagnosed.
+    if(starting){globalThis.__cdbDiag("[claude-cu] gnome-portal-bridge session-end waiting for an in-flight session-start");try{await starting}catch(e){}}
+    // A start that resolved while we waited flips the flag back on; clear it
+    // again before session-end so the end-state reflects this call, not that
+    // start.
+    _gnomeSessionActive=!1;
+    try{await _bridgeAsync(bin,["session-end"],15000)}catch(e){}
+    _gnomeSessionActive=!1;
+    globalThis.__cdbDiag("[claude-cu] gnome-portal-bridge session ended");
+  })().then(function(){_gnomeSessionEnding=null},function(){_gnomeSessionEnding=null});
+  return _gnomeSessionEnding;
 }
 // Bring the portal session up without blocking the main process. Returns a
 // Promise that resolves once session-start finishes (or immediately if the
 // session is already active). Concurrent callers share the in-flight promise.
 function _gnomeEnsureSession(){
+  // Serialise against a teardown in flight, the way startBridgeSession awaits
+  // sessionStopPromise in js/executor_linux.js: bring the session up only once
+  // the end has finished, so the two cannot interleave.
+  if(_gnomeSessionEnding){
+    globalThis.__cdbDiag("[claude-cu] gnome-portal-bridge session-start queued behind an in-flight session-end");
+    return _gnomeSessionEnding.then(_gnomeEnsureSession);
+  }
   if(_gnomeSessionActive)return Promise.resolve();
   if(_gnomeSessionStarting)return _gnomeSessionStarting;
   // A fresh lock is a fresh user gesture: give the portal a real retry (consent
   // dialog and all) rather than inheriting the previous session's cooldown.
   _gnomePortalClearDown();
   if(!_gnomeExitHooked){_gnomeExitHooked=!0;process.once("exit",function(){if(_gnomeSessionActive){try{_cp.execFileSync(_gnomeBridgeBin(),["session-end"],{timeout:5000,stdio:"ignore"})}catch(e){}}})}
-  _gnomeSessionStarting=_gnomeSessionStart().then(function(){_gnomeSessionStarting=null},function(){_gnomeSessionStarting=null});
-  return _gnomeSessionStarting;
+  // Identity-check on settle: clear the slot only if it is still OURS. Without
+  // it, an older start settling after the slot was reassigned frees it and lets
+  // a third caller launch yet another concurrent session-start.
+  var p=_gnomeSessionStart().then(clear,clear);
+  function clear(){if(_gnomeSessionStarting===p)_gnomeSessionStarting=null}
+  _gnomeSessionStarting=p;
+  return p;
 }
 function _readClean(f){var buf=_fs.readFileSync(f);try{_fs.unlinkSync(f)}catch(e){}return buf.toString("base64")}
 function _findMonByPoint(px,py){
