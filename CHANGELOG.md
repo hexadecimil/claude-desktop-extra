@@ -2,6 +2,30 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-22
+
+### Nix: the built-in terminal spawns a shell again
+
+Every terminal tab on NixOS showed "Failed to spawn shell", and `main.log` recorded the
+pty-host worker exiting with `Cannot find module './prebuilds/linux-x64/pty.node'`. The
+file was there; the message was node-pty's wrapper around a failed dlopen. The `.deb`'s
+prebuilt `pty.node` links `libstdc++`, and on every other distro the system library path
+supplies it. On Nix nothing does: nixpkgs' Electron carries Chromium's own static libc++
+and links no `libstdc++` at all, so the process had no loaded copy to satisfy the binding
+with and no RPATH to find one by.
+
+`packaging/nix/package.nix` now gives `pty.node` its own RPATH to the stdenv `libstdc++`
+(and fails the build if the binding is not where the `.deb` puts it). The RPATH goes on
+the binding rather than on the wrapper's `LD_LIBRARY_PATH`, which the app hands down to
+every shell, MCP server and Claude Code it spawns.
+
+### Nix: pin Electron to the major upstream builds against
+
+`flake.nix` took nixpkgs' default `electron` alias, which is Electron 43 today while
+v2.2553.1 ships on Electron 44. `package.nix` already said to pin the major at the call
+site; the flake now does so with `electron_44`. Consumers who `follows` an older nixpkgs
+without that attribute can still override `electron` themselves.
+
 ## 2026-09-18
 
 ### Claude Desktop v2.2553.1
