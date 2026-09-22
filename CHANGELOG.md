@@ -26,6 +26,17 @@ v2.2553.1 ships on Electron 44. `package.nix` already said to pin the major at t
 site; the flake now does so with `electron_44`. Consumers who `follows` an older nixpkgs
 without that attribute can still override `electron` themselves.
 
+Verified while reviewing: the bundled `pty.node` is the only native binding this affects. The
+`.deb` ships exactly two `.node` files, and the other one (`@ant/claude-native`) links no
+`libstdc++` at all; `pty.node` lists `libstdc++.so.6` and `libgcc_s.so.1` in `DT_NEEDED` with an
+empty RPATH, and the single gcc-lib entry covers both. The two fixes are also genuinely
+independent - `pty.node` is N-API (no `node::` symbols), so it was never the Electron major that
+kept it from loading. nixpkgs' `electron_44` is 44.3.0 against the `.deb`'s 44.2.0: same major,
+same `NODE_MODULE_VERSION` 149, so the prebuilt binding stays ABI-compatible.
+
+Contributed by ZhengRong Feng ([@Konakonai](https://github.com/Konakonai)) in
+[#254](https://github.com/patrickjaja/claude-desktop-extra/pull/254) - thanks!
+
 ## 2026-09-18
 
 ### Claude Desktop v2.2553.1
