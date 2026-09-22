@@ -2,6 +2,154 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-22
+
+### Nix: the built-in terminal spawns a shell again
+
+Every terminal tab on NixOS showed "Failed to spawn shell", and `main.log` recorded the
+pty-host worker exiting with `Cannot find module './prebuilds/linux-x64/pty.node'`. The
+file was there; the message was node-pty's wrapper around a failed dlopen. The `.deb`'s
+prebuilt `pty.node` links `libstdc++`, and on every other distro the system library path
+supplies it. On Nix nothing does: nixpkgs' Electron carries Chromium's own static libc++
+and links no `libstdc++` at all, so the process had no loaded copy to satisfy the binding
+with and no RPATH to find one by.
+
+`packaging/nix/package.nix` now gives `pty.node` its own RPATH to the stdenv `libstdc++`
+(and fails the build if the binding is not where the `.deb` puts it). The RPATH goes on
+the binding rather than on the wrapper's `LD_LIBRARY_PATH`, which the app hands down to
+every shell, MCP server and Claude Code it spawns.
+
+### Nix: pin Electron to the major upstream builds against
+
+`flake.nix` took nixpkgs' default `electron` alias, which is Electron 43 today while
+v2.2553.1 ships on Electron 44. `package.nix` already said to pin the major at the call
+site; the flake now does so with `electron_44`. Consumers who `follows` an older nixpkgs
+without that attribute can still override `electron` themselves.
+
+Verified while reviewing: the bundled `pty.node` is the only native binding this affects. The
+`.deb` ships exactly two `.node` files, and the other one (`@ant/claude-native`) links no
+`libstdc++` at all; `pty.node` lists `libstdc++.so.6` and `libgcc_s.so.1` in `DT_NEEDED` with an
+empty RPATH, and the single gcc-lib entry covers both. The two fixes are also genuinely
+independent - `pty.node` is N-API (no `node::` symbols), so it was never the Electron major that
+kept it from loading. nixpkgs' `electron_44` is 44.3.0 against the `.deb`'s 44.2.0: same major,
+same `NODE_MODULE_VERSION` 149, so the prebuilt binding stays ABI-compatible.
+
+Contributed by ZhengRong Feng ([@Konakonai](https://github.com/Konakonai)) in
+[#254](https://github.com/patrickjaja/claude-desktop-extra/pull/254) - thanks!
+
+## 2026-09-18
+
+### Claude Desktop v2.2553.1
+
+Upstream's first 2.x release, and a full re-minify: not one of the 157 content-hashed
+chunks in v1.49585.0 survives into the 201 of v2.2553.0, and `index.js` and
+`index.pre.js` differ too. Every patch pattern re-matched against freshly minified
+text rather than surviving by luck. Exactly one sub-patch needed re-anchoring.
+
+v2.2553.1 landed during the same pass. It re-emits every chunk hash again but is
+semantically identical where our work is pinned: the same set of flag ids, the same 171
+managed-settings keys, the same 199 chunks and the same darwin/win32/linux gate counts,
+on the same Electron 44.2.0. All patches apply to it unchanged, so the audit below holds
+for both and `.upstream-version` records v2.2553.1.
+
+**Computer Use: the tool handler gained a state argument.** Upstream reshaped the
+internal-MCP server definition. The Computer Use server now exposes a
+`createToolHandler` that builds a per-handler state object and passes it as a new
+leading argument, so `handleToolCall` went from `(toolName, input, session)` to
+`(state, toolName, input, session)`, and the dispatcher moved onto that state as a
+memoized slot instead of being a plain `factory(session)` call.
+
+- `patches/linux/fix_computer_use_linux.nim` matches the four-argument signature, and
+  its dispatcher anchor now captures the whole init expression rather than just the
+  factory name, so the teach-mode forward reuses upstream's own memoization whatever
+  arguments that factory grows. A new assertion fails the build if the captured
+  expression does not take the session parameter.
+- `js/cu_handler_injection.js` passes the state through on the `computer_batch`
+  recursion.
+- The per-call compliance deny still has parity with upstream: the gate the handler
+  now calls in its preamble resolves to the same function the patch captures into
+  `globalThis.__cdbCuHipaa`. The Computer Use action surface is unchanged at 17
+  actions, and upstream still ships no native Linux executor, so the patch remains
+  load-bearing.
+
+**Nothing else moved against us.** No PORTABLE gate appeared, no new Linux-blocking
+gate, no reclassification: the 22 `process.platform==="linux"` sites are
+content-identical, not merely count-identical. The one platform-gated new feature,
+the `coworkCopperHeron` watch-record sub-mode, is inert on Linux, which ships neither
+the recorder provider nor the window entry it loads. One change is Linux-favourable:
+a local Claude Code session that fails for want of a sandbox now reports
+`sandbox_required_unavailable` instead of a generic crash. The eIPC sender-origin
+allowlist our Extra settings guard mirrors is unchanged, so that guard stays in sync.
+
+### Restarting from the Extra page no longer kills a running Cowork task
+
+`cdb-app:relaunch`, the restart the Extra settings page performs to apply a titlebar-mode
+switch, called `app.relaunch()` followed by `app.exit(0)`. `app.exit()` emits neither
+`before-quit` nor `will-quit`, so it skipped every one of the app's registered quit-cleanup
+handlers. The Cowork VM was killed rather than stopped, MCP child processes were cut off
+mid-flight, web storage was not flushed, and the main window's geometry was never persisted
+- which is worst precisely here, since the rows that ask the user to restart are the ones
+that change window chrome.
+
+It now calls the app's own relaunch primitive, which sets the latch that clears the
+before-quit interceptor, then quits so the full cleanup pass runs and the relaunch happens
+at the end of it. The old path remains as a fallback, so if the anchor ever moves the button
+degrades to the previous behaviour instead of doing nothing.
+
+### Computer Use on GNOME Wayland: the portal session can no longer be left running
+
+Releasing the Computer Use lock while `session-start` was still waiting on the GNOME
+RemoteDesktop consent dialog lost the update: `session-end` ran first, then the pending start
+resolved and marked the session active again with no lock held, leaving the
+`gnome-portal-bridge` daemon alive until the process exited. `_gnomeSessionEnd` now clears
+the flag on entry and awaits any in-flight start before ending the session, and publishes
+that teardown so a lock re-acquired mid-teardown queues its start behind it instead of
+opening a second portal session and a second consent dialog. It also records whether a session is
+wanted at all, so a release that arrives while a start is merely QUEUED behind a teardown
+cancels it instead of bringing the portal up with no lock held, and it skips the teardown
+when nothing was ever started. That is the whole of the shape the KDE path already used. The session transitions are now logged, so the ordering
+is greppable in `claude-patches.log` rather than invisible, and
+`scripts/tests/linux/test-cu-gnome-session-lifecycle.mjs` pins all three orderings
+(it fails against the old code).
+
+**Baselines refreshed** against v2.2553.x: `PLATFORM_GATE_BASELINE.md`,
+`CLAUDE_FEATURE_FLAGS.md`, `CLAUDE_BUILT_IN_MCP.md` and `ION.md`. Feature flags grew
+354 to 415, the static registry 73 to 89 and the async merger 13 to 17; the
+Extra -> Deployment key catalog grew 143 to 171, including a ten-key self-hosted
+family and four session-retention keys. ion-dist is structurally unchanged and both
+of its patch sites still resolve by content signature.
+
+## 2026-09-16
+
+### Extra settings: the IPC sender guard now checks the origin, not just the scheme
+
+`__cdbEx_okSender` in `js/extra_settings_main.js` accepted the main frame of any `http(s)://`
+webContents. Every other main-process module (panel tabs, files quick-open, window controls, diff
+views) compares the parsed origin against an exact allowlist, and the Extra handlers are the ones that
+matter most: `cdb-deploy:set` / `cdb-deploy:save-raw` write the 3P gateway URL, its API key and the
+bootstrap URL, and `cdb-app:relaunch` restarts the app. Reaching them needed a page from another origin
+to end up in the main frame of a webContents that carries the `cdbExtra` preload, so the practical
+exposure was small, but the guard was weaker than its siblings for no reason.
+
+- The guard now uses the same `ALLOWED_ORIGINS` list and parsed-origin comparison as the sibling
+  modules. `https://evil.example`, `https://claude.ai.evil.example`, `http://claude.ai`,
+  `https://claude.ai:8443` and `https://user@claude.ai@evil.example` are all rejected; the four real
+  origins still pass. An unparseable URL or a sender without `isDestroyed()` fails closed.
+- `scripts/tests/core/test-deployment-main.mjs` now proves it: nine foreign `https` origins are refused
+  by `cdb-deploy:set` and `cdb-app:relaunch` and nothing lands on disk. Before the change the same
+  harness showed a foreign sender successfully writing `inferenceGatewayBaseUrl`.
+- The dom-ready page injection is unchanged: it still runs on every non-localhost http(s) document,
+  because it is not a security boundary (the page script only mounts the panel on claude.ai and
+  every IPC call re-validates the sender).
+
+The four origins are the right contract, not a guess: upstream's own eIPC sender validator enforces
+exactly the same production set. Third-party inference is unaffected - in 3P mode the main window
+loads `app://localhost`, which our http(s)-only injection gate has always skipped, so the Extra panel
+never mounted there in the first place.
+
+Contributed by Mike Gordievsky ([@mike-the-enginer](https://github.com/mike-the-enginer)) in
+[#249](https://github.com/patrickjaja/claude-desktop-extra/pull/249) - thanks!
+
 ## 2026-09-13
 
 ### Custom models in the Code picker (new community feature)

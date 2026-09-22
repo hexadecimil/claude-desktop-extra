@@ -15,8 +15,9 @@
  * therefore tolerates a missing registry and answers {ok:false,error:...}.
  *
  * SECURITY: the caller is remote claude.ai code. Every handler validates its
- * sender (main frame of an http(s) webContents), flag ids must exist in the
- * catalog, and values are restricted to JSON scalars.
+ * sender's ORIGIN against an exact allowlist (main frame only - see
+ * __cdbEx_okSender below), flag ids must exist in the catalog, and values are
+ * restricted to JSON scalars.
  *
  * The two placeholder string literals below are replaced at build time by the
  * Nim patch with the contents of js/extra_settings_page.js and
@@ -32,6 +33,7 @@
   var _ipc = _electron.ipcMain;
   var _path = require("path");
   var _fs = require("fs");
+  var _URL = require("url").URL;
 
   var __cdbEx_pageSrc = "__CDB_EX_PAGE_SRC__";
   var __cdbEx_pageCss = "__CDB_EX_PAGE_CSS__";
@@ -337,7 +339,7 @@
     };
   }
 
-  // The managed-config key catalog of Claude Desktop v1.49585.0 (143 keys), read out of the
+  // The managed-config key catalog of Claude Desktop v2.2553.0 (171 keys), read out of the
   // bundle's own schema (flat key, zod leaf type, scopes, title). Upstream drives
   // its 3P Setup wizard from that schema; we cannot reach it from here (it is
   // module-scoped in index.pre.js), so this is a PINNED COPY and is therefore
@@ -376,6 +378,18 @@
     { key: "inferenceModelPricing", kind: "json", group: "connection", scope: "3p",
       label: "Per-model rates",
       note: "JSON array of { name, inputPerMtok, outputPerMtok, cacheReadPerMtok, cacheWritePerMtok } rows, each replacing Anthropic list price for one model id in the Usage estimate (upstream gates this @next)." },
+    { key: "defaultModelEffort", kind: "enum", group: "connection", scope: "3p",
+      label: "Default model effort", options: ["low", "medium", "high", "xhigh", "max"],
+      note: "Starting effort level for every model the picker offers; a level a model does not offer falls to the nearest lower one, and it never exceeds that model's maxEffort. CLAUDE_CODE_EFFORT_LEVEL still wins in Code sessions." },
+    { key: "alwaysStartWithDefaultModel", kind: "bool", group: "connection", scope: "3p",
+      label: "Always start with the default model",
+      note: "New conversations open on the first model in the list and at the default effort, instead of remembering the user's last choice." },
+    { key: "modelCatalogEnabled", kind: "bool", group: "connection", scope: "3p",
+      label: "Model catalog metadata", dflt: true,
+      note: "Fetches display names and capability metadata for the configured models. Off keeps the built-in labels and makes no catalog request." },
+    { key: "modelCatalogUrl", kind: "text", group: "connection", scope: "3p",
+      label: "Model catalog URL",
+      note: "Serves the catalog metadata instead of Anthropic's endpoint. It never changes which models are offered, their order or the default." },
     { key: "inferenceCredentialKind", kind: "enum", group: "connection", scope: "3p",
       label: "Credential kind",
       options: ["static", "helper-script", "interactive", "vendor-profile", "oauth", "workforce"] },
@@ -443,6 +457,9 @@
 
     { key: "inferenceFoundryResource", kind: "text", group: "connection", scope: "3p", only: "foundry",
       label: "Azure AI Foundry resource" },
+    { key: "inferenceFoundryBaseUrl", kind: "text", group: "connection", scope: "3p", only: "foundry",
+      label: "Azure AI Foundry base URL",
+      note: "Full endpoint URL, used instead of building one from the resource name." },
     { key: "inferenceFoundryApiKey", kind: "secret", group: "connection", scope: "3p", only: "foundry",
       label: "Azure AI Foundry API key" },
     { key: "inferenceFoundryAuthFlow", kind: "enum", group: "connection", scope: "3p", only: "foundry",
@@ -457,6 +474,12 @@
 
     { key: "inferenceCredentialHelper", kind: "text", group: "connection", scope: "3p",
       label: "Credential helper script", note: "Absolute path; prints fresh credentials on demand." },
+    { key: "inferenceCredentialHelperArgs", kind: "lines", group: "connection", scope: "3p",
+      label: "Credential helper arguments",
+      note: "One argument per line, up to 32, passed to the helper script." },
+    { key: "inferenceCredentialHelperWindows", kind: "text", group: "connection", scope: "3p",
+      label: "Credential helper script (Windows)",
+      note: "Windows devices run this path instead of Helper script, with the same arguments, timeout, TTL and environment. macOS and Linux ignore it." },
     { key: "inferenceCredentialHelperTtlSec", kind: "int", group: "connection", scope: "3p",
       label: "Credential helper TTL (s)" },
     { key: "inferenceCredentialHelperTimeoutSec", kind: "int", group: "connection", scope: "3p",
@@ -473,6 +496,9 @@
       label: "SSO login domain" },
     { key: "forceLoginOrgUUID", kind: "text", group: "connection", scope: "1p",
       label: "Required organization UUID" },
+    { key: "importThirdPartyHistoryIntoOrgUUID", kind: "text", group: "connection", scope: "1p",
+      label: "Import earlier third-party sessions into this organization",
+      note: "Organization UUID that adopts the sessions a user created while the device ran in 3P mode." },
 
     { key: "inferenceStreamIdleTimeoutSec", kind: "int", group: "connection", scope: "3p", only: "gateway",
       label: "Stream idle timeout (s)", max: 1800,
@@ -501,17 +527,68 @@
       label: "Entra delegated scope",
       note: "Delegated scopes the add-in requests, space- or comma-separated and all for one resource, e.g. api://.../.default; requires your own client ID (upstream gates this @next)." },
 
+    { key: "coworkVmIpv6Enabled", kind: "bool", group: "connection", scope: "3p",
+      label: "Enable IPv6 in the workspace VM" },
+
+    { key: "selfHostedUrl", kind: "text", group: "connection", scope: "3p",
+      label: "Self-hosted execution URL",
+      note: "Endpoint that runs sessions on your own infrastructure. The rest of this block only applies once it is set." },
+    { key: "selfHostedCredentialKind", kind: "enum", group: "connection", scope: "3p",
+      label: "Self-hosted credential kind", options: ["interactive", "helper-script", "static"],
+      note: "How the app authenticates to that endpoint: a browser or OS-broker sign-in, a helper script that prints the token, or a static token." },
+    { key: "selfHostedOidc", kind: "json", group: "connection", scope: "3p", secret: true,
+      label: "Self-hosted sign-in IdP (OIDC)",
+      note: "Same shape as the gateway SSO IdP: issuer or explicit endpoints, client ID, scopes, bearerTokenType and an optional RFC 8707 resource." },
+    { key: "selfHostedOidcAuthFlow", kind: "enum", group: "connection", scope: "3p",
+      label: "Self-hosted sign-in flow", options: ["browser", "broker"],
+      note: "The system browser, or the OS Microsoft Entra broker (WAM on Windows, Company Portal on macOS)." },
+    { key: "selfHostedOidcTokenStorage", kind: "enum", group: "connection", scope: "3p",
+      label: "Self-hosted sign-in storage", options: ["persistent"],
+      note: "Keeps the sign-in in the OS credential store; where none exists it is held for the running app only." },
+    { key: "selfHostedToken", kind: "secret", group: "connection", scope: "3p",
+      label: "Self-hosted bearer token",
+      note: "Static token sent as Authorization: Bearer. Prefer a helper script or a sign-in." },
+    { key: "selfHostedCredentialHelper", kind: "text", group: "connection", scope: "3p",
+      label: "Self-hosted credential helper",
+      note: "Absolute path to an executable that prints the token on stdout. Run with no arguments; same contract as the inference credential helper." },
+    { key: "selfHostedCredentialHelperTtlSec", kind: "int", group: "connection", scope: "3p",
+      label: "Self-hosted helper TTL (s)",
+      note: "Helper output is cached this long before the helper re-runs; blank means 3600." },
+    { key: "selfHostedCredentialHelperTimeoutSec", kind: "int", group: "connection", scope: "3p", max: 600,
+      label: "Self-hosted helper timeout (s)",
+      note: "Maximum wait for the helper to finish; blank means 60." },
+    { key: "selfHostedCredentialHelperSilentRefreshEnabled", kind: "bool", group: "connection", scope: "3p",
+      label: "Re-run self-hosted helper for silent refresh", dflt: true },
+
     // --- usage limits -------------------------------------------------------
     { key: "inferenceMaxTokensPerWindow", kind: "int", group: "limits", scope: "3p",
       label: "Max tokens per window" },
     { key: "inferenceTokenWindowHours", kind: "int", group: "limits", scope: "3p",
       label: "Token cap window (h)", max: 720 },
 
+    { key: "chatSessionRetentionDays", kind: "int", group: "limits", scope: "3p", max: 3650,
+      label: "Chat retention period (days)",
+      note: "Deletes chats, with their files, after this many days without activity; blank keeps them until the user deletes them. Projects and memory stay." },
+    { key: "coworkSessionRetentionDays", kind: "int", group: "limits", scope: "3p", max: 3650,
+      label: "Cowork retention period (days)",
+      note: "Deletes Cowork tasks, with their uploads and outputs, after this many days without activity. Spaces and memory stay." },
+    { key: "codeSessionRetentionDays", kind: "int", group: "limits", scope: "3p", max: 3650,
+      label: "Code retention period (days)",
+      note: "Deletes Code sessions, conversation included, after this many days without activity. Uncommitted work stays on disk." },
+    { key: "sessionRetentionHold", kind: "bool", group: "limits", scope: "3p",
+      label: "Suspend session deletion",
+      note: "Legal hold: pauses all three retention periods without clearing them." },
+
     // --- surfaces, sandbox & tools -----------------------------------------
     { key: "chatTabEnabled", kind: "bool", group: "sandbox", scope: "3p", label: "Chat tab" },
     { key: "coworkTabEnabled", kind: "bool", group: "sandbox", scope: "3p", label: "Cowork tab", dflt: true },
     { key: "isClaudeCodeForDesktopEnabled", kind: "bool", group: "sandbox", scope: "both",
       label: "Code tab", dflt: true },
+    { key: "desktopHome", kind: "enum", group: "sandbox", scope: "3p",
+      label: "Desktop home", options: ["standard", "simple", "no-vm", "off"],
+      note: "Which home surface the app opens on. no-vm is an upstream @next value." },
+    { key: "scheduledTasksEnabled", kind: "bool", group: "sandbox", scope: "3p",
+      label: "Allow scheduled tasks" },
     { key: "chatAdvancedFileAnalysisEnabled", kind: "bool", group: "sandbox", scope: "3p",
       label: "Advanced file analysis in Chat" },
     { key: "autoModeEnabled", kind: "bool", group: "sandbox", scope: "3p", label: "Cowork Auto mode" },
@@ -560,6 +637,9 @@
     { key: "sshHostAllowlist", kind: "lines", group: "sandbox", scope: "3p",
       label: "SSH host allowlist",
       note: "One host pattern per line; empty means SSH sessions stay off unless the device's Claude Code managed-settings allowlist applies. * allows any host." },
+    { key: "sshTransport", kind: "enum", group: "sandbox", scope: "3p",
+      label: "SSH connection engine", options: ["auto", "system-openssh", "builtin"],
+      note: "system-openssh runs the connection through the ssh program on every platform; builtin uses the app's own SSH library." },
     { key: "sshClientPath", kind: "text", group: "sandbox", scope: "3p",
       label: "SSH client program",
       note: "Absolute path to the OpenSSH ssh program used for SSH sessions; unset uses the first ssh on PATH (upstream gates this @next)." },
@@ -594,6 +674,9 @@
       lock: "an MCP server entry can start a process, so it is read-only here - deploy it through /etc/claude-desktop/managed-settings.json" },
     { key: "isLocalDevMcpEnabled", kind: "bool", group: "connectors", scope: "both",
       label: "Allow user-added MCP servers", dflt: true },
+    { key: "allowedPluginMcpServers", kind: "json", group: "connectors", scope: "3p",
+      label: "Allowed plugin MCP servers",
+      note: "JSON array of { serverUrl } patterns, with * wildcards, that a plugin's remote MCP server must match. Up to 100 entries; an empty array blocks them all." },
     { key: "mcpPersistentAlwaysAllowEnabled", kind: "bool", group: "connectors", scope: "3p",
       label: "Allow persistent tool approvals", dflt: true },
     { key: "mcpToolTimeoutSec", kind: "int", group: "connectors", scope: "3p", max: 3600,
@@ -671,6 +754,9 @@
     { key: "relaunchEnforcementHours", kind: "int", group: "telemetry", scope: "3p", max: 336,
       label: "Configuration relaunch window (h)",
       note: "Hours a user may keep working on the old configuration after a managed-configuration change is detected; blank means 24. Upstream also accepts 0 for an immediate restart, which this page cannot write." },
+    { key: "dangerousMaxVersion", kind: "text", group: "telemetry", scope: "3p",
+      label: "Maximum version",
+      note: "Pins auto-update to at most this X.Y.Z version. Upstream marks it dangerous: a device left behind stops getting fixes." },
     { key: "configRecheckIntervalMinutes", kind: "int", group: "telemetry", scope: "3p", max: 30,
       label: "Configuration re-check interval (min)",
       note: "Minutes between the running app's checks for a changed managed configuration, 2 to 30; blank means 10 (upstream gates this @next)." },
@@ -1073,14 +1159,35 @@
   }
 
   // --- sender validation ---------------------------------------------------
-  // Only the main frame of an http(s) webContents, i.e. the mainView that our
-  // preload bridge lives in. Subframes never get the preload, but reject them
-  // explicitly rather than relying on that.
+  // Exact-origin allowlist, same posture as the panel-tabs, files-quick-open,
+  // window-controls and diff-views sender checks: the parsed origin is compared
+  // against the list, never a substring or prefix test of the raw URL. A scheme
+  // test alone ("is it http(s)?") accepted every https page that ended up in
+  // the main frame of a webContents carrying our preload - and the handlers
+  // behind this guard write the 3P gateway URL, its API key and the bootstrap
+  // URL, and relaunch the app. Only the main frame is accepted: subframes never
+  // get the preload, but reject them explicitly rather than relying on that.
+  var __cdbEx_ALLOWED_ORIGINS = [
+    "https://claude.ai",
+    "https://preview.claude.ai",
+    "https://claude.com",
+    "https://preview.claude.com"
+  ];
+  function __cdbEx_originAllowed(rawUrl) {
+    var origin;
+    try { origin = new _URL(String(rawUrl)).origin; } catch (e) { return false; }
+    for (var i = 0; i < __cdbEx_ALLOWED_ORIGINS.length; i++) {
+      if (origin === __cdbEx_ALLOWED_ORIGINS[i]) return true;
+    }
+    return false;
+  }
+  // FAILS CLOSED: wc.isDestroyed() is called unguarded - a sender object
+  // missing the method throws, and the catch turns that into "not ok".
   function __cdbEx_okSender(ev) {
     try {
       var wc = ev && ev.sender;
       if (!wc || wc.isDestroyed()) return false;
-      if (!/^https?:\/\//i.test(wc.getURL() || "")) return false;
+      if (!__cdbEx_originAllowed(wc.getURL() || "")) return false;
       var frame = ev.senderFrame;
       if (frame && frame.parent) return false;
       return true;
@@ -1504,9 +1611,36 @@
       });
     },
 
+    // Prefer upstream's own relaunch primitive, captured onto globalThis by the
+    // relaunch-capture sub-patch. It sets the latch that bypasses the before-quit
+    // veto interceptor, stashes the relaunch args, and calls app.quit() so the 27
+    // registered onQuitCleanup handlers actually run: the Cowork VM is stopped
+    // rather than killed, MCP child processes are asked to shut down, and the main
+    // window's geometry is persisted. Our own `app.exit(0)` emits neither
+    // "before-quit" nor "will-quit", so it skips that whole pass - which is worst
+    // here, because the titlebar-mode rows are what ask the user to restart.
+    // Fall back to the old path when the capture did not land, so a moved upstream
+    // anchor degrades to the previous behaviour instead of a dead button.
     "cdb-app:relaunch": function () {
       __cdbEx_log("relaunch requested from the Extra settings page");
       setTimeout(function () {
+        var _relaunch = globalThis.__cdbRelaunchApp;
+        if (typeof _relaunch === "function") {
+          try {
+            _relaunch();
+            // The primitive is a no-op when a quit is already under way (it is
+            // guarded on quitting-for-update / cleanup-running / ready-for-quit),
+            // and the window only disappears once the cleanup pass starts. Say so,
+            // otherwise a Restart that legitimately did nothing is indistinguishable
+            // from one that silently failed.
+            __cdbEx_log("relaunch handed to the app's own primitive; the window closes once quit cleanup starts");
+            return;
+          } catch (e) {
+            __cdbEx_log("upstream relaunchApp failed, falling back: " + e.message);
+          }
+        } else {
+          __cdbEx_log("upstream relaunchApp unavailable, using exit(0) fallback");
+        }
         try { _app.relaunch(); _app.exit(0); } catch (e) { __cdbEx_log("relaunch failed: " + e.message); }
       }, 150);
       return { ok: true };

@@ -45,6 +45,11 @@
 # nothing - Ctrl+Shift+T stays the robust fallback).
 
 import std/[os, strutils, json]
+# `regex` (pure Nim) rather than std/nre: nre dlopens the legacy libpcre.so.3 at
+# runtime, which Ubuntu 24.04 - the CI test host - no longer ships (PCRE2 only),
+# so an nre-built binary exits 1 before it reads its input. Every other patch
+# that the feature-test harnesses execute uses `regex` for exactly this reason.
+import regex
 
 const MAIN_JS = staticRead("../../js/extra_settings_main.js")
 const PAGE_JS = staticRead("../../js/extra_settings_page.js")
@@ -57,7 +62,7 @@ const EXTRA_JS = MAIN_JS.replace("\"__CDB_EX_PAGE_SRC__\"", escapeJson(PAGE_JS))
     "\"__CDB_EX_PAGE_CSS__\"", escapeJson(PAGE_CSS)
   )
 
-const EXPECTED_PATCHES = 1
+const EXPECTED_PATCHES = 2
 
 # Positive end-state markers (Rule 6): the build tag, one handler name per panel
 # from the main half, and one class name from the page half - so a partially
@@ -78,38 +83,105 @@ proc apply*(input: string): string =
     echo "  [FAIL] page src/css placeholder was not substituted -- js/extra_settings_main.js drifted"
     quit(1)
 
+  # Our own payload must never contain sub-patch B's end-state shape, or that
+  # sub-patch would read its own idempotency marker out of sub-patch A's output.
+  var guardMatch: RegexMatch2
+  if EXTRA_JS.find(re2"""\}globalThis\.__cdbRelaunchApp=""", guardMatch):
+    echo "  [FAIL] js/extra_settings_main.js contains the relaunch-capture end-state shape -- " &
+      "sub-patch B's idempotency check would false-positive"
+    quit(1)
+
   var patchesApplied = 0
 
+  # ── Sub-patch A: the Extra settings IIFE ───────────────────────────────
   # Idempotency: assert OUR injected end-state, never merely the absence of
   # something else.
   let present = markersPresent(result)
   if present == MARKERS.len:
     echo "  [OK] Extra settings area already injected (" & $present & "/" & $MARKERS.len &
       " markers present)"
-    echo "  [PASS] No changes needed (already patched)"
-    return
-  if present > 0:
+    patchesApplied.inc
+  elif present > 0:
     echo "  [FAIL] Partial injection detected (" & $present & "/" & $MARKERS.len &
       " markers) -- refusing to patch on top; re-audit the bundle"
     quit(1)
-
-  let strictPrefix = "\"use strict\";"
-  if result.startsWith(strictPrefix):
-    result = strictPrefix & EXTRA_JS & result[strictPrefix.len .. ^1]
-    echo "  [OK] Extra settings IIFE inserted after \"use strict\""
   else:
-    result = EXTRA_JS & result
-    echo "  [OK] Extra settings IIFE prepended"
+    let strictPrefix = "\"use strict\";"
+    if result.startsWith(strictPrefix):
+      result = strictPrefix & EXTRA_JS & result[strictPrefix.len .. ^1]
+      echo "  [OK] Extra settings IIFE inserted after \"use strict\""
+    else:
+      result = EXTRA_JS & result
+      echo "  [OK] Extra settings IIFE prepended"
 
-  let found = markersPresent(result)
-  if found < MARKERS.len:
-    for m in MARKERS:
-      if m notin result:
-        echo "  [FAIL] marker missing after injection: " & m
-    echo "  [FAIL] Only " & $found & "/" & $MARKERS.len & " markers present -- aborting"
-    quit(1)
-  echo "  [OK] " & $found & "/" & $MARKERS.len & " end-state markers verified"
-  patchesApplied.inc
+    let found = markersPresent(result)
+    if found < MARKERS.len:
+      for m in MARKERS:
+        if m notin result:
+          echo "  [FAIL] marker missing after injection: " & m
+      echo "  [FAIL] Only " & $found & "/" & $MARKERS.len &
+        " markers present -- aborting"
+      quit(1)
+    echo "  [OK] " & $found & "/" & $MARKERS.len & " end-state markers verified"
+    patchesApplied.inc
+
+  # ── Sub-patch B: publish upstream's relaunch primitive ─────────────────
+  # `cdb-app:relaunch` used `app.relaunch(); app.exit(0)`, which emits neither
+  # "before-quit" nor "will-quit" and therefore skips every registered
+  # onQuitCleanup handler: the Cowork VM is killed instead of stopped, MCP child
+  # processes are cut off, and the main window's geometry is never persisted.
+  # Upstream's own primitive is
+  #   function nfi(e=[]){a.app.isPackaged?sA(!0,e):Uk(e)}
+  # where sA sets the latch that bypasses the before-quit veto interceptor,
+  # stashes the relaunch args and calls app.quit() so the cleanup pass runs and
+  # the relaunch happens at the end of it. Capture it onto globalThis so
+  # js/extra_settings_main.js (a different chunk) can reach it; that file keeps
+  # the old exit(0) path as a fallback, so a moved anchor degrades to the
+  # previous behaviour rather than a dead button.
+  block:
+    const RELAUNCH_ASSIGN = "globalThis.__cdbRelaunchApp="
+    # Idempotency must key off OUR injected END-STATE, and that end-state has to
+    # be distinguishable from any MENTION of the same global. sub-patch A has
+    # already spliced js/extra_settings_main.js into `result` by this point, and
+    # that file reads the global by name - so a bare substring search would start
+    # reporting "already patched" the day anyone writes an assignment to it
+    # there, leaving the bundle silently uncaptured on a green build. Anchor on
+    # the injection's structural neighbour instead: the closing brace of the
+    # captured function declaration immediately followed by the assignment.
+    let landedPat = re2"""\}globalThis\.__cdbRelaunchApp=[\w$]+;"""
+    var landed: RegexMatch2
+    if result.find(landedPat, landed):
+      echo "  [OK] relaunch capture already present (idempotent)"
+      patchesApplied.inc
+    else:
+      # `regex` has no backreferences, so the parameter is captured at each of its
+      # three positions and the three are compared explicitly below - the same
+      # idiom add_feature_files_quick_open_worker uses for its method params.
+      let relaunchPat =
+        re2"""function ([\w$]+)\(([\w$]+)=\[\]\)\{[\w$]+\.app\.isPackaged\?[\w$]+\(!0,([\w$]+)\):[\w$]+\(([\w$]+)\)\}"""
+      # Count first: a second matching site after a re-minify would mean we are
+      # guessing which one to capture.
+      let hits = findAll(result, relaunchPat)
+      if hits.len != 1:
+        echo "  [FAIL] relaunchApp capture: " & $hits.len &
+          " matches (expected exactly 1) -- re-audit the bundle"
+        quit(1)
+      let m = hits[0]
+      let fnName = result[m.group(0)]
+      let param = result[m.group(1)]
+      if result[m.group(2)] != param or result[m.group(3)] != param:
+        echo "  [FAIL] relaunchApp capture: the two arms forward (" & result[m.group(2)] &
+          ", " & result[m.group(3)] & ") but the parameter is `" & param &
+          "` -- wrong site"
+        quit(1)
+      result =
+        result[0 ..< m.boundaries.a] & result[m.boundaries] & RELAUNCH_ASSIGN & fnName &
+        ";" & result[m.boundaries.b + 1 .. ^1]
+      if not result.find(landedPat, landed):
+        echo "  [FAIL] relaunchApp capture did not land"
+        quit(1)
+      echo "  [OK] relaunch capture: upstream relaunchApp published as globalThis.__cdbRelaunchApp"
+      patchesApplied.inc
 
   if patchesApplied < EXPECTED_PATCHES:
     echo "  [FAIL] Only " & $patchesApplied & "/" & $EXPECTED_PATCHES &

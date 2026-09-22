@@ -56,7 +56,13 @@ function buildModule() {
   try { chmodSync(PATCH_BIN, 0o755); } catch {}
   const dir = mkdtempSync(join(tmpdir(), "cdb-deploy-mod-"));
   const mod = join(dir, "extra.cjs");
-  writeFileSync(mod, '"use strict";\n');
+  writeFileSync(mod,
+    '"use strict";\n' +
+    // Minimal stand-in for upstream's relaunch primitive, so the patch's
+    // relaunch-capture sub-patch has the anchor it strictly requires. Never
+    // called here; only its declaration and the appended globalThis assignment
+    // are evaluated.
+    "function nfi(e=[]){a.app.isPackaged?sA(!0,e):Uk(e)}\n");
   execFileSync(PATCH_BIN, [mod], { stdio: "ignore" });
   const src = readFileSync(mod, "utf8");
   if (!src.includes("cdb-deploy:read")) {
@@ -443,6 +449,40 @@ section("[11] only the settings page may reach these handlers");
   const sub = { sender: { isDestroyed: () => false, getURL: () => "https://claude.ai/x" }, senderFrame: { parent: {} } };
   ok(p.handlers["cdb-deploy:mode"](sub, "1p").ok === false, "so is a subframe");
   ok(!existsSync(p.metaFile) && !existsSync(p.modeFile), "and neither wrote anything");
+
+  // The origin must be exactly ours. Every other main-process module compares
+  // the parsed origin against an allowlist; an http(s)-only test would let any
+  // https page that ends up in the main frame with our preload reach the
+  // handlers that write the 3P gateway URL, its API key and the bootstrap URL,
+  // and the one that relaunches the app.
+  const from = (u) => ({ sender: { isDestroyed: () => false, getURL: () => u }, senderFrame: { parent: null } });
+  const foreign = [
+    "https://evil.example/",
+    "https://evil.example/?next=claude.ai",
+    "https://claude.ai.evil.example/",
+    "https://evil.example/claude.ai/",
+    "https://evil.example#https://claude.ai",
+    "http://claude.ai/",
+    "https://claude.ai:8443/",
+    "https://user@claude.ai@evil.example/",
+    "https://xn--claude-ai.example/"
+  ];
+  for (const u of foreign) {
+    const r = p.handlers["cdb-deploy:set"](from(u), "inferenceGatewayBaseUrl", "https://attacker.example");
+    ok(r.ok === false && /unrecognized sender/.test(r.error), "an https sender at " + u + " is rejected", r.error);
+  }
+  ok(p.handlers["cdb-app:relaunch"](from("https://evil.example/")).ok === false,
+     "and the relaunch handler is behind the same guard");
+  ok(!existsSync(p.metaFile) && !existsSync(p.modeFile), "none of them wrote anything");
+
+  const allowed = ["https://claude.ai/settings", "https://preview.claude.ai/x",
+                   "https://claude.com/", "https://preview.claude.com/x?y=1#z"];
+  for (const u of allowed) {
+    ok(p.handlers["cdb-deploy:read"](from(u)).ok === true, "our own origin " + u + " is accepted");
+  }
+  ok(p.handlers["cdb-deploy:read"]({ sender: { getURL: () => "https://claude.ai/" }, senderFrame: { parent: null } }).ok === false,
+     "a sender without isDestroyed() fails closed");
+  ok(p.handlers["cdb-deploy:read"](from("not a url")).ok === false, "an unparseable URL fails closed");
 }
 
 // --- [12] a managed policy file that cannot be used -----------------------
@@ -522,6 +562,42 @@ section("[14] the Themes panel's save target follows what is on disk");
   ok(p.call("cdb-extra:themes-list").configPath === jsonc,
      "the registry's own fixed path is still reported alongside it");
   delete globalThis.__cdbThemes;
+}
+
+// cdb-app:relaunch must PREFER upstream's own relaunch primitive. Ours used
+// app.exit(0), which emits neither "before-quit" nor "will-quit" and so skipped
+// every registered quit-cleanup handler (the Cowork VM stop, the MCP child
+// shutdowns, the window-geometry persist). The capture is published by the
+// patch as globalThis.__cdbRelaunchApp; when it is missing the handler has to
+// fall back rather than leave a dead button.
+section("[15] cdb-app:relaunch prefers upstream's relaunch primitive");
+{
+  const waitForTimer = () => new Promise(r => setTimeout(r, 400));
+
+  const p1 = install();
+  delete globalThis.__cdbRelaunchApp;
+  ok(p1.call("cdb-app:relaunch").ok === true, "the handler still answers ok when no capture is present");
+  await waitForTimer();
+  ok(p1.diag.some(m => m.includes("relaunchApp unavailable")),
+     "with no capture it says so and takes the exit(0) fallback");
+
+  const p2 = install();
+  let upstreamCalls = 0;
+  globalThis.__cdbRelaunchApp = () => { upstreamCalls++; };
+  ok(p2.call("cdb-app:relaunch").ok === true, "and answers ok when the capture IS present");
+  await waitForTimer();
+  ok(upstreamCalls === 1, "upstream's relaunchApp is called exactly once", String(upstreamCalls));
+  ok(!p2.diag.some(m => m.includes("relaunchApp unavailable")),
+     "and the fallback is NOT reported");
+
+  // A throwing capture must not strand the user: fall back, and say why.
+  const p3 = install();
+  globalThis.__cdbRelaunchApp = () => { throw new Error("boom"); };
+  p3.call("cdb-app:relaunch");
+  await waitForTimer();
+  ok(p3.diag.some(m => m.includes("falling back")),
+     "a capture that throws is reported and falls back rather than dying silently");
+  delete globalThis.__cdbRelaunchApp;
 }
 
 console.log("\n" + (fail ? `${pass} passed, ${fail} FAILED` : `ALL ${pass} CHECKS PASSED`));

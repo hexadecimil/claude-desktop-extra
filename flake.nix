@@ -17,6 +17,10 @@
       {
         packages = {
           claude-desktop = pkgs.callPackage ./packaging/nix/package.nix {
+            # The official .deb ships on Electron 44 (see CHANGELOG / the deb's
+            # usr/lib/claude-desktop/version). nixpkgs' `electron` alias lags a
+            # major behind, so pin the one the bundle was built for.
+            electron = pkgs.electron_44;
             # Avoid pulling claude-code from nixpkgs — its npm tarball is
             # frequently yanked between releases, breaking the build.
             # Users can override: claude-desktop.override { claude-code = pkgs.claude-code; }

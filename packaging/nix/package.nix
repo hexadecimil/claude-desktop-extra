@@ -1,4 +1,5 @@
 { lib
+, stdenv            # only for stdenv.cc.cc's libstdc++, which node-pty's binding links
 , stdenvNoCC
 , fetchurl
 , electron
@@ -47,9 +48,9 @@
 
 let
   # Updated automatically by CI (build-and-release.yml) on each release.
-  version = "1.52386.3"; # pkgver: always the upstream Claude Desktop version
-  pkgrel = "1"; # Arch-style release counter: bumped on re-releases of the same upstream version, reset to 1 on version bumps
-  hash = "sha256-XbE1bZozsCO6JWwyno/zISrITt0okQSv0eJLjdxKDYM=";
+  version = "2.2553.1"; # pkgver: always the upstream Claude Desktop version
+  pkgrel = "3"; # Arch-style release counter: bumped on re-releases of the same upstream version, reset to 1 on version bumps
+  hash = "sha256-UoEPQua2ZfVD2byvsWWI1og0rdtVSnERbHql9MJlCfk=";
   # Every release publishes under its own tag (v<version> for pkgrel 1,
   # v<version>-<pkgrel> for re-releases) and its assets are never overwritten
   # afterwards, so this URL is immutable and a pinned flake.lock keeps fetching
@@ -111,7 +112,34 @@ stdenvNoCC.mkDerivation {
   # It reports success explicitly: a silent pass is indistinguishable from the
   # check never running (a renamed attribute would be ignored, not an error), and
   # this is exactly the assertion whose absence caused #206 to go unnoticed.
+  #
+  # node-pty. The .deb's prebuilt pty.node links libstdc++ (DT_NEEDED), but
+  # nothing in a running Claude Desktop provides it: Chromium/Electron carries
+  # its own static libc++ and links no libstdc++ at all, so the dynamic loader
+  # has no already-loaded copy to satisfy the binding with and no RPATH to find
+  # one by. Every other packaging format gets it from the system library path;
+  # on Nix there is none. dlopen failed, node-pty reported it as the
+  # misleading "Cannot find module './prebuilds/linux-x64/pty.node'", the
+  # pty-host utility process died before its first spawn ack, and every
+  # built-in terminal tab showed "Failed to spawn shell". Give the binding its
+  # own RPATH rather than adding libstdc++ to the wrapper's LD_LIBRARY_PATH,
+  # which the app hands down to every shell, MCP server and Claude Code it
+  # spawns. The asar header flags the file as unpacked, so Electron loads it
+  # from app.asar.unpacked directly and the changed size is not checked.
   postFixup = ''
+    patched=0
+    for pty in $out/lib/claude-desktop/resources/app.asar.unpacked/node_modules/node-pty/prebuilds/linux-*/pty.node; do
+      [ -f "$pty" ] || continue
+      chmod u+w "$pty"
+      patchelf --add-rpath ${lib.makeLibraryPath [ (lib.getLib stdenv.cc.cc) ]} "$pty"
+      patched=$((patched + 1))
+    done
+    if [ "$patched" -eq 0 ]; then
+      echo "ERROR: no node-pty binding under app.asar.unpacked; the .deb layout moved." >&2
+      exit 1
+    fi
+    echo "node-pty libstdc++ RPATH: OK ($patched binding(s))"
+
     if ! patchelf --print-rpath $out/lib/claude-desktop/claude | grep -q libsecret; then
       echo "ERROR: libsecret is not in the claude binary's RPATH." >&2
       echo "nixpkgs' electron no longer ships Chromium's dlopen-only libraries there;" >&2
