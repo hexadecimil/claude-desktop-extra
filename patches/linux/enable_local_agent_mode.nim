@@ -14,9 +14,8 @@
 #   1b yukonSilver (NH) Linux early return
 #   2  chillingSlothLocal (no-op -- inherently supported on Linux)
 #   3  mC() async merger overrides
-#   3n sshRemotePassthrough (regression guard since v1.18286.0: flag 1496676413
-#      upstreamed - the SSH remote MCP/plugin passthrough went unconditional;
-#      the guard asserts resolveSshControllerForMcp stays gate-free)
+#   (3n sshRemotePassthrough, flag 1496676413, was upstreamed in v1.18286.0; its
+#    assert-only guard was RETIRED in v2.7032.0 per AGENTS.md Rule 4/6.)
 #   4  preferences defaults (quietPenguinEnabled / louderPenguinEnabled)
 #
 # (Sub-patches 3b-3p, the GrowthBook rollout-bypass forces, were RETIRED
@@ -54,7 +53,7 @@
 import std/[os, strformat, strutils]
 import std/nre
 
-const EXPECTED_PATCHES = 7
+const EXPECTED_PATCHES = 6
 
 proc apply*(input: string): string =
   result = input
@@ -257,35 +256,6 @@ proc apply*(input: string): string =
       else:
         echo "  [FAIL] mC() feature merger: 0 matches, expected 1"
         failed = true
-
-  # Patch 3n: sshRemotePassthrough flag 1496676413 - now a REGRESSION GUARD.
-  #
-  # Upstream UPSTREAMED this in v1.18286.0: the flag literal "1496676413" is
-  # gone from the bundle entirely, and every call site that used to gate on
-  # `et("1496676413")` now runs unconditionally:
-  #   - `resolveSshControllerForMcp(e){if(!(!e||!et("1496676413")))return Jc(e)}`
-  #     -> `resolveSshControllerForMcp(e){if(e)return jB(e)}` (gate removed)
-  #   - `spawnClaudeCodeProcess=o.createSpawnFunction(e.stderr,et("1496676413"),s,c,a)`
-  #     -> `spawnClaudeCodeProcess=o.createSpawnFunction(e.stderr,s,c,a)` (arg dropped)
-  #   - the `adjustSdkOptions(e){et("1496676413")||(delete e.plugins,delete
-  #     e.mcpServers)}` class method (which stripped plugins/MCP off SSH
-  #     sessions when the flag was off) is gone from the SSH backend class.
-  # SSH remote plugin/MCP forwarding is now unconditional - exactly what this
-  # sub-patch used to force. Per AGENTS.md Rule 6, assert the upstreamed
-  # end-state (unconditional resolveSshControllerForMcp) instead of forcing a
-  # flag that no longer exists; FAIL loud if upstream ever re-gates it.
-  # v1.19367 (code-split): the return callee became a member call
-  # (`return N.getRemoteServerController(e)`), still gate-free; the callee
-  # position allows dotted member expressions.
-  # (Contributed in PR #179 by @boommasterxd.)
-  let sshResolverUnconditional =
-    re"""resolveSshControllerForMcp\([\w$]+\)\{if\([\w$]+\)return [\w$]+(?:\.[\w$]+)*\([\w$]+\)\}"""
-  if result.find(sshResolverUnconditional).isSome:
-    echo "  [OK] sshRemotePassthrough: native unconditional SSH plugin/MCP forwarding present (resolveSshControllerForMcp has no flag gate) - regression guard satisfied"
-    inc patchesApplied
-  else:
-    echo "  [FAIL] sshRemotePassthrough: resolveSshControllerForMcp no longer unconditional - upstream may have re-gated SSH plugin/MCP forwarding; re-audit Patch 3n"
-    failed = true
 
   # Patch 4: Change preferences defaults for Code features.
   #

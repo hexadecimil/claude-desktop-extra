@@ -87,7 +87,7 @@ Panel tabs and Files quick open depend on DOM anchors in remote claude.ai code; 
 | [`fix_utility_process_kill.nim`](patches/linux/fix_utility_process_kill.nim) | Sends `SIGKILL` to a stuck helper process once the timeout passes; upstream re-sends `SIGTERM`, which a hung process ignores and the app never exits |
 | [`fix_window_bounds.nim`](patches/linux/fix_window_bounds.nim) | Re-fits the app's content when the window is resized, maximized or snapped, which otherwise left stale geometry behind on Linux |
 
-Two of these embed regression assertions alongside the work they inject: `enable_local_agent_mode.nim` (real-platform reporting to claude.ai, the native Linux Cowork bundle path, SSH MCP passthrough) and `fix_startup_settings.nim` (native XDG autostart read/write).
+Two of these embed regression assertions alongside the work they inject: `enable_local_agent_mode.nim` (real-platform reporting to claude.ai, the native Linux Cowork bundle path) and `fix_startup_settings.nim` (native XDG autostart read/write).
 
 ## Adding your own feature
 

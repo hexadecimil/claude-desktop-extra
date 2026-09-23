@@ -16,7 +16,7 @@
 // flags with a switch per flag. It writes claude-desktop-extra.json; entries you
 // put here win per flag id, and that panel shows those as locked.
 // Every GrowthBook flag observed being read from the feature store in Claude
-// Desktop v2.2553.0 is listed below, commented out. Uncomment a line to force
+// Desktop v2.7032.0 is listed below, commented out. Uncomment a line to force
 // it; separate multiple active entries with commas (a trailing comma after the
 // last one is fine). true/false for switches; flags marked (value flag)
 // carry numbers/strings/objects - a bare true may be meaningless for those.
@@ -28,7 +28,7 @@
 // (Code / Cowork / Computer Use enablement) are NOT listed - they bypass this
 // file entirely. Active overrides are logged to logs/claude-patches.log.
 // Flag IDs are Anthropic-internal and can vanish or change meaning in any
-// release (this list reflects v2.2553.0). If the app misbehaves, empty this
+// release (this list reflects v2.7032.0). If the app misbehaves, empty this
 // file first.
 {
   // "activeTheme": "mario",
@@ -80,6 +80,7 @@
     // "283281522": true, // browser-pane sibling gate (default ON) next to the 2464731750 request_access tool (new in v1.46388.2)
     // "286376943": true, // Plugin skills for system prompt - gates getPluginSkillsForSystemPrompt (new in v1.2278.0)
     // "291584251": true, // SSH transport kill-switch: ON forces the ssh2 library, never OpenSSH (new in v1.32352.1)
+    // "299664339": true, // conversation asides - passes the inline asides plugin options to sessions (default ON) (new in v2.7032.0)
     // "323247490": true, // [git] core.hooksPath discovery via git config --list --name-only (default ON) (new in v2.2553.0)
     // "341781248": true, // side-sessions event injection sibling gate, with 3025587613 / 3531612483 (default ON) (new in v2.2553.0)
     // "371539023": true, // session transport attestation gate (verification-state routing)
@@ -90,12 +91,15 @@
     // "451382573": true, // DISABLE_BRIEF_MODE_STOP_HOOK env var for cowork/LAM sessions
     // "458990115": true, // folder-access routine-scoped standing - ON drops the routine grant anchor (session standing only) (new in v1.46388.2)
     // "476513332": true, // check_interval_ticks config (value flag)
+    // "478602036": true, // unattended built-in tool trim - part of the fork-session flag snapshot (unattendedBuiltinToolTrim) (new in v2.7032.0)
     // "500434831": true, // worktree pool fast-acquire kill-switch - ON disables fast acquisition (new in v2.2553.0)
     // "539375764": true, // PR author-association module gate, with 846970509 / 599480072 (default ON) (new in v2.2553.0)
     // "541746109": true, // [my-access] fetch-failure fallback kill-switch - ON stops serving the degraded access answer after repeated fetch failures (new in v1.40609.0)
     // "552157343": true, // plugin add gating (default ON)
     // "554317356": true, // timeout ms (value flag)
+    // "568988794": true, // local-session turn delegation (turnIsDelegated, default ON) (new in v2.7032.0)
     // "570403704": true, // device attestation v2 - anthropic-beta header path gate (try/catch read; also on the 3p remote-allowed list) (new in v1.46388.2)
+    // "575160718": true, // installed-plugins watcher semantic-digest reload kill switch - ON reloads on every registry change (new in v2.7032.0)
     // "581786799": true, // SSH transcript-sync kill-switch - ON drops appendFromRemote and post-reconnect resync (new in v1.37937.0)
     // "583857784": true, // transport bridge: route session through the SDK adapter when ON
     // "599480072": true, // PR/CI module sibling gate of 539375764 (default ON) (new in v2.2553.0)
@@ -110,6 +114,7 @@
     // "717163759": true, // isKeepLiveRemoteKillswitchOn - keep-live remote kill-switch (new in v1.37937.0)
     // "720735283": true, // Marketplace migration
     // "721728391": true, // inference routing via org policy backend (new in v1.28929.0)
+    // "725990316": true, // credential plugins-scope - adds pluginsScope to the minted token (default ON). Replaces 1689023552 (new in v2.7032.0)
     // "732695530": true, // remote-tools-device gate (new in v1.32352.1)
     // "733405693": true, // folder-access request UI mode - classifier tier on top of the 49458538 card (new in v1.40609.0)
     // "743194442": true, // Google auth deep-link - ON keeps ASWebAuth instead of the /login/app-google-auth handler (new in v1.37937.0)
@@ -128,6 +133,7 @@
     // "884132720": true, // OAuth scope passthrough - forwards the OAuth token scope into the CLI session env build: o
     // "885442848": true, // hosted Chrome bridge first_party mode - picks the 1p bridge when hybrid detection is off; also a live listener (new in v1.34493.1)
     // "919579692": true, // PreviewOriginPolicy disable - ON skips the credentialed-nav origin-policy check for launch preview (new in v1.32352.1)
+    // "922243720": true, // read-only tool cwd verification - realpath check of the verified cwd for AWF read-only tools (default ON) (new in v2.7032.0)
     // "922442190": true, // session transport attestation gate (paired with 371539023/2023768496)
     // "939257113": true, // Dispatch child session detection - isRemoteDispatchChild qualifier
     // "946844604": true, // Cowork memory remote sync v2 gate - with canSyncCoworkMemoryRemotely() and not HIPAA-restricted; OFF answers refusal flag_off (new in v1.49585.0)
@@ -150,8 +156,10 @@
     // "1183214304": true, // rc-serve renderer heap-report gate (trio with 3764441751/1410651677) (new in v1.32352.1)
     // "1197768857": true, // spaceMemoryBridge feature gate - registry entry rt('1197768857')?Ed:{status:'unavailable'}
     // "1221293892": true, // renderer crash-loop watchdog - app.exit(0) after 20 crashes in 60s (new in v1.26832.0)
+    // "1234686386": true, // device-companion sub-gate - INERT (its parent check is hardcoded false) (new in v2.7032.0)
     // "1239409407": true, // app-menu Open Folder item (Ctrl+Shift+O; default ON); observed for menu rebuild (new in v1.46388.2)
     // "1240280160": true, // worktree checkout-mode sibling gate, read with the 1754160972 mode config (new in v2.2553.0)
+    // "1240761070": true, // SSH failure-remedy kill switch - ON drops the remedies (e.g. review_host_key) a failed SSH session start offers (new in v2.7032.0)
     // "1263782781": true, // git operation timeout config - bash/stage/commit default_ms and max_ms (value flag) (new in v1.40609.0)
     // "1265511872": true, // macOS cloud-placeholder (dataless file) handling in the connected-folders reader (new in v1.37937.0)
     // "1278239935": true, // browser-tools mouse-press guard kill-switch (frame-chain subframe origin grants) (new in v1.32352.1)
@@ -168,17 +176,20 @@
     // "1410651677": true, // rc-serve config object, invalid keys fall back to defaults (value flag) (new in v1.32352.1)
     // "1412563253": true, // askUserQuestion preview format ('html')
     // "1434290056": true, // Dispatch code tasks permission mode - bypass-permissions for dispatch sessions (new in v1.
+    // "1439993118": true, // OAuth v2 cache clear - on a rejected token refresh, clears the cached identity and retries (default ON) (new in v2.7032.0)
     // "1447478638": true, // LAM scheduled-task auto-permission gate (checked with mdmAutoModeDisabled)
     // "1477483922": true, // CCD gated-SDK-snapshot gate (chipLevel) - gate change marks session SDK snapshots stale (new in v1.32885.1)
     // "1480778051": true, // render_rss_bytes memory-telemetry suppression (ON = skip emission)
     // "1486104550": true, // remote-control session MCP verb gate, sibling of 2300874989 (default ON) (new in v2.2553.0)
     // "1496761016": true, // Terminal panel tools - OFF answers "The Terminal panel tools are turned off for this app or organization" (default ON) (new in v2.2553.0)
     // "1517059896": true, // CLI version-floor gate, third of the 96832454 / 2153038254 family (default ON) (new in v2.2553.0)
+    // "1533587495": true, // pending-permission re-notify - re-sends a pending approval card only while the context is below the token threshold (new in v2.7032.0)
     // "1544796833": true, // session-concurrency limits, e.g. maxConcurrentPerSession (value flag)
     // "1549258603": true, // LAM OAuth 401 refresh via resolveSdkOauthToken path
     // "1550954491": true, // bare Alt-key tap opens the main menu popup in the main/design window (default ON) (new in v1.49585.0)
     // "1552109632": true, // worktree entry-claims kill-switch - ON disables claim entries (new in v2.2553.0)
     // "1569828280": true, // Binary-asset-fetch gate - if(!et('1569828280')){...gate_off...skipping binary asset fetch}
+    // "1593661558": true, // CCD commands/agents list memo kill switch - ON drops stale-while-revalidate and the wait for an installing query (new in v2.7032.0)
     // "1595132361": true, // CLAUDE_CODE_QUESTION_EXTENDED env for local-agent sessions (new in v1.46388.2)
     // "1603637451": true, // skills folder limits config - skillMdMaxBytes / assetMaxBytes / maxFilesPerSkill / folderBudgetBytes / resendSettleMs (value flag) (new in v1.46388.2)
     // "1606273333": true, // scheduled-task MCP tool gate (default ON) (new in v2.2553.0)
@@ -186,25 +197,25 @@
     // "1645353060": true, // decideCliBinaryForSpawn - managed CLI binary selection (default ON, together with 762798616) (new in v1.46388.2)
     // "1648655587": true, // scheduled-task active-session caps: perTask/global (value flag)
     // "1677081600": true, // dispatch orchestrator base URL override (value flag)
-    // "1689023552": true, // CCD credential plugins-scope - adds pluginsScope to the minted token (default ON) (new in v2.2553.0)
     // "1695017395": true, // plugin sync module gate - installed_plugins.json watcher + host failure backoff (siblings 2906430762 / 2755789005) (new in v1.40609.0)
     // "1696890383": true, // CLAUDE_COWORK_MEMORY_GUIDE env - passes memory guide to cowork sessions (also in force-ON 
     // "1699596383": true, // scheduled-task "unreachable" result classification (new in v2.2553.0)
     // "1701404423": true, // bridge WebSocket pong-timeout reconnect-reason classification (overloaded / reset_silent / rotated) (new in v1.46388.2)
     // "1703762832": true, // onModelRefusalFallback retry - when ON, a refusal response with direction:'retry' in Agent
     // "1707927936": true, // size limit tuning, bytes (value flag)
+    // "1709366921": true, // EXDEV copy gate - a cross-device rename swap copies instead of delete + copy (new in v2.7032.0)
     // "1710585411": true, // office-bridge trigger context suppression - ON drops triggerId/orgUuid/accountUuid from the bridge request (new in v1.34493.1)
     // "1743527783": true, // session quit-interrupt resume gateEnabled (interruptedByQuitAt handling) (new in v1.32352.1)
     // "1748356779": true, // prompt template config: system_prompt/user_prompt (value flag)
     // "1754160972": true, // worktree checkout-mode config (value flag) (new in v1.32352.1)
     // "1776348311": true, // unattended-session tool availability gate ("This tool is unavailable in unattended...") (new in v1.46388.2)
     // "1781903805": true, // codeSessionKeepAwake - power-save blocker during Code turns (default ON) (new in v1.46388.2)
+    // "1800160441": true, // skills org-block latch, sibling of 3656976882 (new in v2.7032.0)
     // "1824824999": true, // consolidate-memory skill v2 - server-configured description/prompt text
     // "1825995196": true, // SSH background-readopt candidates kill-switch (new in v1.37937.0)
     // "1836754949": true, // scheduled-task run report on completion + dispatch prompt-hash stash (new in v1.40609.0)
     // "1847129881": true, // device Cowork artifact list tool - ON announces the newer list-artifacts tool instead of the 1947305033 one (new in v2.2553.0)
     // "1893165035": true, // enabled+categories config object (value flag)
-    // "1904135164": true, // plugin download moveExistingAside, default ON (new in v1.34493.1)
     // "1923867086": true, // terminal scrollback log + read_terminal tool (live listener) (new in v1.46388.2)
     // "1924247864": true, // device-registry gate (Ylt)
     // "1925932989": true, // session tool-set gate in the spawn-options module (default ON) (new in v1.46388.2)
@@ -216,11 +227,13 @@
     // "1972091654": true, // askClaude device RPC
     // "1978029737": true, // pluginsSyncIntervalMs (value flag)
     // "1986048577": true, // routine sheet late-window ms (resolveRoutineSheetLateWindowMs) - default 7200000, clamped 60000..86400000, <=0 disables (value flag) (new in v1.49585.0)
+    // "1991650828": true, // shell agent-socket kill switch - ON starts shells without the agent socket (isShellAgentSocketKillswitchOn) (new in v2.7032.0)
     // "1992087837": true, // chillingSlothPool worktree warm pool - feature left the registry in v1.28929.0, flag still gates warm-pool isEnabled
     // "2001396010": true, // [remote-file] outputs commit kill-switch - ON refuses staged file commits with "disabled" (new in v2.2553.0)
     // "2004571505": true, // LocalMcpServerManager closeServerByName path gate (default ON) (new in v1.37937.0)
     // "2015900644": true, // Code-tab MCP tool-set gate, sibling of 270847253 / 1341990989 / 3556866454 (default ON) (new in v2.2553.0)
     // "2016258596": true, // device-tool artifact storage/read gate (artifact_read_gate_off telemetry when OFF)
+    // "2018643766": true, // git source-ref fetch memo / --porcelain fetch kill switch - ON disables both (new in v2.7032.0)
     // "2023768496": true, // coworkTrustedDeviceToken read/write gate
     // "2048589233": true, // thinkingSummaryOnDemand in the CCD gated-SDK snapshot, default ON; also in the snapshot-staleness observe list (new in v1.34493.1)
     // "2049450122": true, // Session handoff - gates cross-device session activity broadcasting (com.anthropic.claude.s
@@ -253,7 +266,6 @@
     // "2300874989": true, // remote-control session MCP verb gate, sibling of 1486104550 (default ON) (new in v2.2553.0)
     // "2303338333": true, // archived-session hints in list results, observed live (default ON) (new in v2.2553.0)
     // "2307090146": true, // Plugin OAuth storage gate (also added to force-ON defaults map)
-    // "2309422447": true, // mergeMessageBufferIfActive
     // "2340532315": true, // Plugin sync on session start
     // "2345107588": true, // GrowthBook cache persistence - persist/seed GrowthBook cache from/into sessions (new in v1
     // "2345515473": true, // Sessions-bridge account-change reevaluation
@@ -263,10 +275,12 @@
     // "2392971184": true, // Replay user messages - adds --replay-user-messages to CLI args for session resume; also en
     // "2393677837": true, // PreToolUse hook for worktree-aware tool input validation
     // "2394039067": true, // git credential posture legacy fallback for read/push/fetch/scrub (new in v1.46388.2)
+    // "2405551282": true, // stamped-proof check mode - enforce when ON (default), observe-only when off (new in v2.7032.0)
     // "2427043945": true, // numeric rate/threshold (value flag)
     // "2464731750": true, // browser-pane request_access tool - a flip reloads the remote-tools device (new in v1.37937.0)
     // "2464838160": true, // lazy worktree start for attended sessions (new in v1.46388.2)
     // "2487484738": true, // CLAUDE_CODE_ENABLE_BG_SHELL_PRESSURE_REAP=1 in the local-agent CLI env (new in v2.2553.0)
+    // "2521146974": true, // git status-cache warm-up mode - ON reverts core.untrackedcache/feature.manyfiles, off primes them (new in v2.7032.0)
     // "2529235968": true, // shadowRemoteServers - shadow remote plugin MCP servers with local ones (new in v1.37937.0)
     // "2537760906": true, // scheduled-task pending-permission auto-deny after the wait budget (new in v1.46388.2)
     // "2576868839": true, // isSignalWakeKillswitchOn - SSH signal-wake kill-switch (new in v1.40609.0)
@@ -275,22 +289,24 @@
     // "2614807392": true, // Session feature A
     // "2654621331": true, // EventLogging telemetry flush-interval ms - live listener (value flag) (new in v1.32352.1)
     // "2661075028": true, // coworkCopperHeron async merger override - requires watch-record first, which is darwin/win32 only, so inert on Linux (new in v2.2553.0)
+    // "2675972342": true, // auto-mode classifier stand-down for force-ask tools (permission_mode_auto path, default ON) (new in v2.7032.0)
     // "2683764500": true, // wait for the CLI process to exit during session teardown (new in v2.2553.0)
     // "2685067074": true, // earlyWindowShow latch - latches the earlyWindowShowLatched preference (boot placeholder / early window show from the next launch) (new in v1.40609.0)
     // "2696933583": true, // ccd editor MCP tools - open_in_editor / reveal_path / request_keep_awake (default ON) (new in v2.2553.0)
+    // "2716316020": true, // worktree tombstone lane kill switch - ON disables the moved-aside worktree tombstone queue (new in v2.7032.0)
     // "2719700143": true, // pop-out pane claimant arbitration between two visible native views (default ON) (new in v1.40609.0)
     // "2725876754": true, // Org CLI exec policies - gates reading orgCliExecPolicies for plugin tool permission checks
     // "2726556121": true, // INVERTED: ON disables the SSH file-transfer fast-path
     // "2745857735": true, // LAM remote folder-access homeDirectories + remoteFileTools
     // "2753512555": true, // teleport-to-cloud handoff tool - also requires claude.ai product features (default ON) (new in v2.2553.0)
     // "2755789005": true, // plugin sync module gate - sibling of 1695017395 / 2906430762 (new in v1.46388.2)
+    // "2766542666": true, // base-branch sync on PR autofix kill switch - ON skips syncSessionWithBaseBranch before an autofix (new in v2.7032.0)
     // "2767293802": true, // Edit-menu command claim by pop-out panes (default ON); observed for menu rebuild (new in v1.46388.2)
     // "2768844978": true, // Cowork VM image delta-apply download path (applyVmImageDelta)
     // "2787764107": true, // held-routine-release device-reconnect config - enabled / minIntervalSeconds / minGapSeconds (value flag) (new in v2.2553.0)
     // "2795002549": true, // Projects OAuth scopes
     // "2795595714": true, // device-companion secondary gate (default ON; currently inert - co-gate hardcoded off)
     // "2798169495": true, // batch file-read request gate (invalid / too_large / too_many outcomes) (new in v1.46388.2)
-    // "2800354941": true, // deterministic sorting of plugin/tool/log lists
     // "2806360886": true, // folder-access request kill-switch - ON disables the remembered/dialog folder-grant path (new in v1.34493.1)
     // "2825088777": true, // [remote-cu] remote computer-use control - longer resolution-cache TTL and lock lease when ON (new in v2.2553.0)
     // "2833632524": true, // keptInputRecoverySwitchedOff - kill-switch for kept-input recovery on dying sessions (new in v1.40609.0)
@@ -307,7 +323,6 @@
     // "2921739883": true, // bridge reconnect backoff config - min_ms / max_ms / stable_ms (value flag) (new in v1.46388.2)
     // "2938421209": true, // updater staged-update tick interval (value flag) (new in v1.37937.0)
     // "2940196192": true, // coworkArtifacts - Cowork artifacts (list/thumbnails IPC, artifact inference, VM mount)
-    // "2941281426": true, // CLI file checkpointing + rewind files (new in v1.46388.2)
     // "2948506237": true, // auth callback nonce mismatch tolerance - ON accepts a callback whose nonce does not match (new in v2.2553.0)
     // "2961678273": true, // [logRetention] transcript-retention sweep kill-switch - ON reports skipped:disabled (new in v2.2553.0)
     // "2961849615": true, // revive CCD sessions after relogin
@@ -317,18 +332,23 @@
     // "3018088575": true, // local MCP server manager gate, default ON (new in v1.32352.1)
     // "3019665678": true, // Code-tab credential re-mint fallback (default ON) (new in v1.46388.2)
     // "3025587613": true, // side-sessions event injection (default ON; with 3531612483) (new in v1.46388.2)
+    // "3042392253": true, // ccdBaseBranchSync tool - brings a session branch up to date with its base, git run on the host (default ON) (new in v2.7032.0)
     // "3043546415": true, // [EventLogging] telemetry credential mode - cookie / bearer / off (value flag; peeked at startup + observed) (new in v1.46388.2)
     // "3045399524": true, // session config: enabled/alwaysLoad (value flag)
     // "3046457088": true, // cowork taskRunFinished permission-resolve routing (new in v1.26832.0)
     // "3046702961": true, // app-menu Code entries when the Code surface is enabled (default ON); observed for menu rebuild (new in v1.40609.0)
+    // "3059213726": true, // session title suggestions - offers a proposed title and persists titleOffers (new in v2.7032.0)
     // "3076393065": true, // ccd_window MCP tools - open_session_in / close_split / set_sidebar_collapsed / get_window_layout (split-view layout of Code sessions) (new in v1.49585.0)
     // "3093186863": true, // SSH reattach kill-switch - ON forces reattach off regardless of CLAUDE_DESKTOP_SSH_REATTACH (new in v1.34493.1)
     // "3093754864": true, // session auto-archiving decision module gate (default ON) (new in v2.2553.0)
     // "3123045134": true, // resolveCloudBranch - cloud branch resolution (OFF throws Feature disabled) (new in v1.26832.0)
+    // "3126429675": true, // remote-plugin enabled-state SWR / app-owned roots kill switch - ON disables both (new in v2.7032.0)
     // "3142047527": true, // app-menu rebuild observer (new in v1.40609.0)
+    // "3162918178": true, // CCD folder setup tools (request_directory / change_directory / propose_branch) (default ON) (new in v2.7032.0)
     // "3163246478": true, // bridge WebSocket mid-call pong-grace kill-switch (new in v1.40609.0)
     // "3166359512": true, // memory-item inventory dispatcher gate (isOn / observe) (new in v1.46388.2)
     // "3183093548": true, // plugin scan-hidden upload stubs gate, default ON (value flag) (new in v1.34493.1)
+    // "3216202605": true, // sleep auto-resume offer - with 4044603026, offers to resume a turn interrupted by system sleep (default ON) (new in v2.7032.0)
     // "3223040764": true, // claude-in-chrome MCP tool set for Cowork VM sessions (default ON) (new in v2.2553.0)
     // "3229517805": true, // scheduled-task config: sampleConcurrencyLimit/dataCacheTtlMs (value flag)
     // "3300773012": true, // scheduled-task skill description override (value flag)
@@ -342,6 +362,8 @@
     // "3436441689": true, // file-access prompt admin-policy interplay (new in v1.26832.0)
     // "3444158716": true, // Imagine/Visualize MCP server for cowork+ccd sessions
     // "3448679706": true, // session-config enable gate next to the 3045399524 parse (replaces 130970054) (new in v1.28929.0)
+    // "3469616823": true, // skill-creation org-block override - ON skips the blocked_by_org_* lockout check (new in v2.7032.0)
+    // "3484205914": true, // built-in tool availability gate, sibling of 2300874989/1486104550 (default ON) (new in v2.7032.0)
     // "3491600236": true, // bridge WebSocket network-redial watch kill-switch (new in v1.40609.0)
     // "3512519265": true, // CLI force-end kill-switch on update - ON leaves still-running CLIs alone (new in v2.2553.0)
     // "3523350481": true, // worktree index-heal kill-switch - ON disables index healing (new in v2.2553.0)
@@ -361,6 +383,8 @@
     // "3634338308": true, // DO NOT ENABLE: ON latches Cowork local tasks OFF (coworkLocalTasksOffLatched pref, yukonSilver reports disabled_by_org_policy); peeked on every network fetch (new in v1.49585.0)
     // "3640318556": true, // remote-tools bridge WS URL: device-level /bridge vs per-session path (new in v1.32352.1)
     // "3649943861": true, // claude:// artifact deep links - opens /artifact/<id> routes from the custom scheme (new in v2.2553.0)
+    // "3656976882": true, // skills availability gate - tracks the blocked_by_org_admin state per account (with 1800160441) (new in v2.7032.0)
+    // "3664723602": true, // Code-session BROWSER shim - routes session browser opens through the ccd-br socket (honours authentication.disableDeepLinks) (new in v2.7032.0)
     // "3691521536": true, // Stealth updater - nudge updates when no active sessions
     // "3705360580": true, // CCD OAuth 401 refresh via readCcdOauthToken path
     // "3721849379": true, // CCD OAuth token renew-ahead margin (default ON) (new in v2.2553.0)
@@ -370,6 +394,7 @@
     // "3758515526": true, // official plugins repo override (value flag)
     // "3764441751": true, // rc-serve renderer heap-report gate 2 (trio with 1183214304/1410651677) (new in v1.32352.1)
     // "3778159589": true, // Device-stale-relogin - rt('3778159589')?e():A() selecting the relogin path (markDeviceStal
+    // "3778508830": true, // parallel git checkout workers - ON uses half the cores (2..8) instead of 2..16 (new in v2.7032.0)
     // "3791538283": true, // Space memory keyless-device path - also requires fresh GrowthBook data for the current account (new in v2.2553.0)
     // "3796647113": true, // stall-sampler gate - live listener
     // "3807767338": true, // seedPolicyLimitsIntoSession / refreshPolicyLimitsPersist - org policy-limit persistence
@@ -383,6 +408,7 @@
     // "3977864451": true, // agent-emulated viewport reset at turn end (default ON) (new in v2.2553.0)
     // "3982397363": true, // stale-model-clear robustness toggle
     // "3990395613": true, // branch-deltas feature co-gate (new in v1.26832.0)
+    // "4018447017": true, // skill folder mount/upload path gate (per-skill file and byte budget) (new in v2.7032.0)
     // "4034153053": true, // isEpitaxyPreviewEnabled (gated on native support probe)
     // "4036648294": true, // ccdConnectorTools async merger override - 1p only, not 3p (default ON) (new in v2.2553.0)
     // "4039294468": true, // plugin backfill module gate - sibling of 3183093548 / 2294160313 (new in v1.46388.2)
@@ -390,6 +416,7 @@
     // "4044603026": true, // terminal shell integration (new in v1.46388.2)
     // "4066504968": true, // guided Cowork setup skill description (value flag)
     // "4074604942": true, // 1p direct MCP pool gate (pool stays null when OFF)
+    // "4082309721": true, // git worktree warm-up sub-gate, sibling of 3000061192/630659907 (new in v2.7032.0)
     // "4092838515": true, // storage MCP tools - get_storage_usage and the 30/60/90-day inactive-worktree cleanup (default ON) (new in v2.2553.0)
     // "4100354330": true, // session link-classification kill-switch - ON disables it (new in v2.2553.0)
     // "4114957886": true, // SSH reattach default when CLAUDE_DESKTOP_SSH_REATTACH is unset (new in v1.34493.1)
@@ -404,6 +431,7 @@
     // "4217215889": true, // OS entry points gate - Dock/jump-list continue-last-session entries (new in v1.37937.0)
     // "4236214729": true, // scratch-session folder offer on first spawn (new in v2.2553.0)
     // "4255448834": true, // code project deep link - ON hands claude:// project links to the fallback route (new in v2.2553.0)
+    // "4267385443": true, // git hooksPath / worktreeConfig memo kill switch - ON re-runs the git config writes every time (new in v2.7032.0)
     // "4279816466": true, // media permission requests carry securityOrigin / mediaTypes into the check (default ON) (new in v2.2553.0)
     // "4282876673": true, // async module gate (default ON)
     // "4286026368": true, // shadow-git fetch-refspec check kill-switch - ON skips the check (new in v2.2553.0)

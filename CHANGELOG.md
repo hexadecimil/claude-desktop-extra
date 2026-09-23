@@ -2,6 +2,39 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-23
+
+### Claude Desktop v2.7032.0
+
+The auto-release stopped on one sub-patch. It was an assert, not a real breakage.
+`enable_local_agent_mode` Patch 3n checked that SSH remote sessions still forward
+plugins and MCP servers without a flag gate (upstreamed in v1.18286.0). It looked
+for the method `resolveSshControllerForMcp`, which upstream has now moved into a
+module-level helper. The body is the same, `if(e)return <controller>(e)`, still
+without a gate, and it is still called from both `createMcpServer` and
+`reconcileServers`. Patch 3n injected nothing, so under the retired-guard policy
+(AGENTS.md Rule 4/6) it is removed rather than re-anchored. The patch's
+EXPECTED_PATCHES goes from 7 to 6.
+
+Every other patch applied unchanged. Spot-checks confirmed that the Computer Use,
+Quick Entry, GrowthBook-override and Extra-settings injections still land on the
+intended sites.
+
+- **Electron** 44.2.0 -> 44.4.3. No new native modules.
+- **GrowthBook catalog:** +33 / -5 flags. None is platform-gated. The
+  `claude-desktop-extra.jsonc` template now covers the new flags.
+- **Deployment panel:** the managed-settings catalog goes from 171 to 178 keys:
+  - added: `keepAwakeEnabled`, `codeAllowedRepositories`, `deviceToolsEnabled`,
+    `inferenceIdpOidc`, `inferenceIdpAuthFlow`, `claudeCodeProcessWrapperEnabled`,
+    `disableLocalConfigCache`, `mcpScheduledTaskApprovalLifetimeDays`
+  - removed: `selfHostedOidcTokenStorage`
+- **New upstream features:**
+  - `resources/claude-browser-shim.js`, a `$BROWSER` shim that opens links from a
+    Code session in its Browser pane and falls back to `xdg-open`.
+  - A new built-in MCP server, `ccd_turn` (`update_plan`, `wrap_up`).
+  - A Linux-only repaint fallback for Preview/Browser tabs whose first frame is blank.
+  - No new darwin/win32 gates that block Linux.
+
 ## 2026-09-22
 
 ### Nix: the built-in terminal spawns a shell again
