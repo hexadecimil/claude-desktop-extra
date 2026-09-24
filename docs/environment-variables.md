@@ -29,6 +29,7 @@ Set permanently in `~/.bashrc` / `~/.zshrc`, or pass per-launch: `CLAUDE_DISABLE
 
 A few variables belong to specific features and are documented alongside them:
 
+- `CDB_CUSTOM_MODELS_DEBUG=1` - trace the custom models feature: every API path the page requests, the bootstrap surfaces, and every Messages request the Claude Code preload leaves alone. See [Custom models](custom-models.md).
 - `COWORK_SCREENSHOT_CMD` - override Computer Use screenshot auto-detection. See [Computer Use dependencies](computer-use-dependencies.md).
 - `CLAUDE_VIRTIOFSD_PATH` - path to a system `virtiofsd` binary for the Cowork VM capability probe. Checked before all fixed candidate paths. Needed only when virtiofsd lives outside the probed locations (`/usr/libexec`, `/usr/lib`, `/usr/lib/qemu`, `/run/current-system/sw/bin`, `/usr/bin`) - e.g. AppImage on NixOS. The Nix flake package sets it automatically; the bundled virtiofsd is only ever used on Ubuntu 22.x ([#177](https://github.com/patrickjaja/claude-desktop-extra/issues/177)).
 - `CLAUDE_OVMF_CODE_PATH` - path to an OVMF/AAVMF UEFI *CODE* firmware image for the Cowork VM capability probe, checked before the fixed `/usr/share/...` candidates. The matching `*_VARS*` file must sit next to it with the same name shape (the app derives it by replacing `OVMF_CODE` -> `OVMF_VARS` / `AAVMF_CODE` -> `AAVMF_VARS` in the filename). The Nix flake package sets it automatically ([#177](https://github.com/patrickjaja/claude-desktop-extra/issues/177)).

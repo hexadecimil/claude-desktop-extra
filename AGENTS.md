@@ -68,6 +68,7 @@ These files embed assumptions about upstream internals and **must be challenged 
 | `kwin-portal-bridge/src/teach_overlay.rs` (`TeachStepPayload`) | The **only** place our Computer Use bridges are pinned to upstream DATA rather than to our own executor abstraction. `js/executor_linux.js` forwards upstream's teach-step payload to the bridge verbatim (`JSON.stringify(payload \|\| {})`, no field mapping), and the Rust side deserializes it with `explanation` **required**. An upstream rename is a runtime serde failure on a green build, on KDE Wayland only. Note this repo is **mosi0815's**, not ours - fixes go through a PR to `mosi0815/kwin-portal-bridge`. | ``grep -ao 'onTeachStep({[^}]*}' <new-bundle-concat>`` and confirm the emitted keys are still `explanation` / `nextPreview` / `anchorLogical` |
 | `baseline/PANEL_TABS_ANCHORS.md` | Panel-tabs DOM/fiber anchors: the row shape, `MAX_CHAIN_HOPS`, the literal `"chat"` tile id, the label->tileId map (upstream's `Browser` is tile `preview`), the Session-actions menu, and the runtime warnings that mean an anchor moved | Re-run the console recipes in that file against the new build; every `[cdb-tabs]` warning key listed there names the anchor that broke |
 | `baseline/FILES_QUICK_OPEN_ANCHORS.md` | Files quick-open anchors: the `data-perf-screen="file"` pane, the tree rows, the `Show file tree` toolbar button, the fiber `onPreview(path, line)` handler with its `root` prop, the `entry` props, the `fetchMentionOptions` result shape, and the `[cdb-qopen]` warning keys | Re-run the console recipes in that file against the new build; also re-check the `FileIndexHost.search` anchor of `add_feature_files_quick_open_worker.nim` (`grep -o 'of this\.index\.search(' fileIndexWorker.js` must hit exactly once before patching). The worker-host fork that carries the `CDB_FILES_QUICK_OPEN` gate (``grep -oE 'utilityProcess\.fork\([^)]{0,120}\)' index*.js``) needs no manual check - `add_feature_files_quick_open.nim` sub-patch B rewrites it to pass `env:Object.assign({},process.env)` and its strict count (exactly one match) fails the build if the shape moves |
+| `baseline/CUSTOM_MODELS_ANCHORS.md` | Custom models: the build-time anchors of `add_feature_custom_models.nim` (sub-patches B, C, D and C's two transport-shape asserts), and the run-time assumptions no build can check - the claude.ai bootstrap and `model_selector_state` APIs, and Claude Code CLI internals (`BUN_OPTIONS` preload, `fetch(string, {body})`, the `claude-<id>`/`[1m]` ids, the web-search sub-request shape, `diagnostics.previous_message_id`) | The build-time anchors need nothing (strict counts). Re-grep the local shapes listed there; after a CLI or claude.ai change, read `logs/custom-models.log` and the `[custom-models]` lines that file maps to the anchor that moved |
 | `baseline/ION.md` | ion-dist SPA bundle stats, patched patterns, config key schema | Run ion-dist checks (Prompt 4 in update-prompt.md) |
 | `baseline/PLATFORM_GATE_BASELINE.md` | darwin/win32 conditional counts, gate classifications (PATCHED/NATIVE/STUB/PORTABLE) | Run platform gate re-audit (Prompt 5 in update-prompt.md) |
 | `CHANGELOG.md` | Version-specific notes | Add new entry for each release. **One entry per day** - merge multiple changes into a single dated `##` section with subsections. **Keep notes informative, simple, and straight** - state what changed and the conclusion; don't dump verification minutiae, raw diffs, byte counts, or every minified identifier. The CHANGELOG is a reader's summary, not a debug log. |
@@ -333,20 +334,20 @@ git push
 ```
 patches/           # Nim patch sources (.nim) + Makefile, compiled to native binaries (ls patches/*/*.nim)
 patches/linux/     #   Linux compatibility - always on, not user-configurable (31)
-patches/community/ #   Opt-in features, each with a switch in Settings -> Extra -> Community Features (10)
+patches/community/ #   Opt-in features, each with a switch in Settings -> Extra -> Community Features (11)
 patches/core/      #   Always-on infrastructure the rest builds on: the Extra settings pages, the theme
                    #   engine, the GrowthBook override mechanism, multi-profile plumbing (7)
 js/                # Shared JS snippets embedded by Nim patches via staticRead ("../../js/..." from a patch)
 scripts/           # Build, validation, and launcher scripts (ls scripts/)
 scripts/tests/     # Feature test harnesses, grouped like patches/ (run: scripts/run-feature-tests.sh)
-scripts/tests/community/ #   Behavior tests for the opt-in community features (9)
-scripts/tests/core/      #   Behavior tests for the core infrastructure features (7)
+scripts/tests/community/ #   Behavior tests for the opt-in community features (11)
+scripts/tests/core/      #   Behavior tests for the core infrastructure features (8)
 scripts/tests/linux/     #   Behavior tests for the Linux compatibility patches (5)
 scripts/tests/lib/       #   Shared harness plumbing (theme-engine-harness.mjs), not tests themselves
 docs/              # Per-feature deep-dives (themes, profiles, quick-entry, cowork, feature-flags,
-                   #   computer-use, third-party-inference, environment-variables) + screenshots.
+                   #   computer-use, third-party-inference, custom-models, environment-variables) + screenshots.
                    #   The README carries only a teaser per feature and links here.
-baseline/          # Version-sensitive reference docs re-validated against the bundle each release: CLAUDE_FEATURE_FLAGS.md, CLAUDE_BUILT_IN_MCP.md, ION.md, PLATFORM_GATE_BASELINE.md, PANEL_TABS_ANCHORS.md, FILES_QUICK_OPEN_ANCHORS.md
+baseline/          # Version-sensitive reference docs re-validated against the bundle each release: CLAUDE_FEATURE_FLAGS.md, CLAUDE_BUILT_IN_MCP.md, ION.md, PLATFORM_GATE_BASELINE.md, PANEL_TABS_ANCHORS.md, FILES_QUICK_OPEN_ANCHORS.md, CUSTOM_MODELS_ANCHORS.md
 ```
 
 Each patch has a `# @patch-target:` and `# @patch-type: nim` header. The Makefile compiles them to native binaries. The orchestrator (`scripts/apply_patches.py`) discovers them recursively across the three subdirectories and applies them in **basename order** (the directory only classifies a patch, it does not order it). Use `ls patches/*/*.nim` as the single source of truth for what exists.
@@ -394,6 +395,7 @@ the full behavior.
 |----------|-------------|
 | `main.log` | Main Electron process log (~6MB) |
 | `claude-patches.log` | OUR patch diagnostics (`[claude-cu]`, `[quick-entry]`, `[CustomThemes]`, …) via `__cdbDiag` - console output is discarded by the official build |
+| `custom-models.log` | Custom models, written by the preload inside each Code session's CLI: one line per routed or refused Messages request (never the key); `CDB_CUSTOM_MODELS_DEBUG=1` adds the requests left alone |
 | `claude.ai-web.log` | BrowserView web content log (~1.6MB) |
 | `cowork_vm_node.log` | Cowork VM/session log (~638KB) |
 | `mcp.log` | MCP server communication log (~3.5MB) |

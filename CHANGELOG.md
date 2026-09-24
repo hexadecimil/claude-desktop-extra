@@ -2,6 +2,29 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-24
+
+### Custom models in the Code picker (new community feature)
+
+Models served by an Anthropic-compatible endpoint (DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, a
+gateway such as LiteLLM) can be listed in the Code tab's model picker next to Anthropic's own. Sessions
+that pick one are sent to that endpoint with your own key; everything else stays on the subscription.
+Unlike the 3P mode, nothing is replaced: the login, the Chat tab and the profile stay.
+
+- Off by default. Settings → Extra → **Models** edits providers and models, with presets, fetch models,
+  a connectivity test and effort detection; the switch sits in Community Features. The same config can
+  be written by hand under `customModels` in `claude-desktop-extra.jsonc`.
+- How it works: the patch appends the configured entries to the picker's `/api/bootstrap` response, and
+  a preload in the Claude Code CLI (`BUN_OPTIONS`) forwards only those models' requests, reduced to the
+  compatible subset of the Messages API. Routing is live: key, model and switch changes reach open
+  sessions without a restart.
+- Every model is also a sub-agent type Claude can launch by name, handed to local Code sessions only.
+  Optional app-wide choices: the web-search model, the small/fast model (WebFetch, the classifier) and
+  the default sub-agent model.
+- Keys stay in a 0600 file in a 0700 directory, never reach the page or a session's environment, and
+  never follow a provider to another host. Cowork, Dispatch and SSH sessions get none of it.
+- Docs: [`docs/custom-models.md`](docs/custom-models.md).
+
 ## 2026-09-23
 
 ### Claude Desktop v2.7032.0

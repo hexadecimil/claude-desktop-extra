@@ -201,7 +201,7 @@ Then for each gate, classify it against the table below. **Only a gate that does
 
 | Class | Meaning | Action |
 |-------|---------|--------|
-| **PATCHED** | Already made Linux-compatible by one of the 48 patches | None - already done |
+| **PATCHED** | Already made Linux-compatible by one of the 49 patches | None - already done |
 | **NATIVE** | Genuine macOS/Windows native-API dependency with no Linux analog | None - not portable |
 | **STUB** | Disabled on **all** platforms (hardcoded `!1`, prod-gate, or dev-prototype) - not a Linux exclusion | None - nothing behind it to enable |
 | **PORTABLE** | Gated to mac/win only, no real native dependency, works on Linux if widened | **Patch candidate** |
@@ -309,7 +309,7 @@ As of v1.12603.0, every darwin/win32-only gate maps to PATCHED, NATIVE, or STUB.
 
 (v1.12603.0 counts: darwin 79 / win32 141 / linux 9 / `!=="linux"` 6. The +6/+19/+4/+2 swing vs v1.11847.5 looks alarming but is entirely a **second vendored copy of Claude Code CLI/SDK helper code** - the +1.5MB bundle growth. Every new-side diff line is either a minified-name rename of an old gate or an exact duplicate of a vendored helper: NFC-normalize `A.normalize("NFC")` x2 more, os-name/WSL-detect x2, Linux signal-list x2, which/cross-spawn/isexe/supports-color x2, `claude-code-user` 1->2. Verified by stable-string counts: `openssh-ssh-agent`, `filter.lfs.required`, `screenshotFiltering:"native"`, `Native host sync`, `Open Claude`, `Install kind:`, `office365-mcp.mjs`, `smol-bin` vhdx, `louderPenguin` (10 refs) all unchanged old vs new. The capability map gained exactly one key, `artifactsPane` - flag-gated, no platform check, see STUB table. Earlier history: v1.11847.5 was darwin 73 / win32 122 / linux 5; v1.10628.2 was darwin 65 / win32 113 / linux 5, identical to v1.10628.0.)
 
-## PATCHED - already Linux-compatible (48 patches)
+## PATCHED - already Linux-compatible (49 patches)
 
 These map to existing `patches/*/*.nim`. If a re-audit surfaces a gate touching one of these areas, it's already handled - don't re-flag it. (See `PATCHES.md` for the authoritative list.)
 

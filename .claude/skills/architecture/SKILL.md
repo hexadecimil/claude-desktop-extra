@@ -13,7 +13,7 @@ Anthropic publishes an official Claude Desktop build for Linux as a `.deb` in an
 
 ## What this repo does: ingest -> patch -> repackage
 **Ingest:** download the official `.deb` (apt repo, or `--deb PATH`/`--version X`) -> verify GPG + SHA256 -> `dpkg-deb -x` -> locate `usr/lib/claude-desktop/resources/app.asar` -> `asar extract`.
-**Patch:** run `scripts/apply_patches.py` (the orchestrator) over the extracted bundle. **48** surgical JS patches (`patches/{linux,community,core}/*.nim`, compiled native binaries, regex on minified JS) apply Linux-only fixes and our value-adds. The official build re-minifies between releases, so patterns use `[\w$]+` wildcards anchored on stable strings (feature names, log messages, `process.platform==="darwin"`), count `EXPECTED_PATCHES`, and `quit(1)` on any miss. `.upstream-version` records the last validated version.
+**Patch:** run `scripts/apply_patches.py` (the orchestrator) over the extracted bundle. **49** surgical JS patches (`patches/{linux,community,core}/*.nim`, compiled native binaries, regex on minified JS) apply Linux-only fixes and our value-adds. The official build re-minifies between releases, so patterns use `[\w$]+` wildcards anchored on stable strings (feature names, log messages, `process.platform==="darwin"`), count `EXPECTED_PATCHES`, and `quit(1)` on any miss. `.upstream-version` records the last validated version.
 **Repackage:** `asar pack` (preserving `app.asar.unpacked`, which carries the official build's pre-built native modules - we no longer rebuild node-pty) into a tarball, then build the pacman package/our-own-deb/rpm/AppImage/Nix from it.
 
 Several patches that used to *enable* Cowork on Linux (the "cowork-wiring" cluster) were **removed** once the official build started shipping Cowork natively; what remains of that area is a small number of **regression guards** that assert the upstreamed native-Linux behavior is still present and fail loud if Anthropic ever drops it.
@@ -45,7 +45,7 @@ Historically this project shipped a sibling Go daemon (`claude-cowork-service`, 
 Anthropic official Claude Desktop Linux .deb  (Electron 42.5.1 + native Cowork VM backend)
         │  download → verify GPG+SHA256 → dpkg-deb -x → asar extract
         ▼
-claude-desktop-extra  (48 JS patches: Linux fixes + Computer Use + themes + profiles + Quick Entry)
+claude-desktop-extra  (49 JS patches: Linux fixes + Computer Use + themes + profiles + Quick Entry)
         │  asar pack → tarball
         ▼
 our pacman repo / our .deb / .rpm / .AppImage / Nix
