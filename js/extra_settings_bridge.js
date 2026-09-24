@@ -122,6 +122,76 @@
       return ipcRenderer.invoke("cdb-qopen:pref-set", enabled === true);
     },
 
+    // Custom models (Anthropic-compatible endpoints in the Code model picker).
+    // BOTH channels are owned by patches/community/add_feature_custom_models.nim,
+    // not by the settings patch - the same cross-patch arrangement as
+    // panelTabsRead/Set. set() takes a plain boolean and the main side
+    // re-validates the type; the providers and models are edited through the
+    // customModels* methods below (Settings > Extra > Models).
+    customModelsRead: function () {
+      return ipcRenderer.invoke("cdb-cm:pref-read");
+    },
+    customModelsSet: function (enabled) {
+      return ipcRenderer.invoke("cdb-cm:pref-set", enabled === true);
+    },
+    // The Models panel: the full configuration (never a key value), and the
+    // edits it makes. Each call carries plain data; the main side validates
+    // every field and refuses a provider that lives in the hand-edited .jsonc.
+    customModelsConfig: function () {
+      return ipcRenderer.invoke("cdb-cm:config-read");
+    },
+    customModelsProviderSet: function (provider) {
+      return ipcRenderer.invoke("cdb-cm:provider-set", provider && typeof provider === "object" ? {
+        id: String(provider.id || ""), baseUrl: String(provider.baseUrl || ""), apiKey: String(provider.apiKey || ""),
+        preset: String(provider.preset || ""), modelsUrl: String(provider.modelsUrl || ""),
+        effort: Array.isArray(provider.effort) ? provider.effort.map(String) : undefined
+      } : {});
+    },
+    customModelsWebSearchSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:websearch-set", String(value || ""));
+    },
+    // The CLI's "small/fast model" slot (ANTHROPIC_SMALL_FAST_MODEL): WebFetch
+    // page synthesis, the mid-turn intent classifier, and - when the web-search
+    // model above is unset - the web-search sub-request. "" for the CLI's own
+    // small default, else a custom alias or Anthropic id.
+    customModelsSmallFastSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:smallfast-set", String(value || ""));
+    },
+    // The default sub-agent model ("" = the CLI's own) and the system-prompt
+    // line switch - both read when a session opens.
+    customModelsSubagentSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:subagent-set", String(value || ""));
+    },
+    customModelsAnnounceSet: function (value) {
+      return ipcRenderer.invoke("cdb-cm:announce-set", value === true);
+    },
+    customModelsProviderDelete: function (id) {
+      return ipcRenderer.invoke("cdb-cm:provider-delete", String(id || ""));
+    },
+    customModelsModelSet: function (providerId, model) {
+      return ipcRenderer.invoke("cdb-cm:model-set", String(providerId || ""), model && typeof model === "object" ? {
+        id: String(model.id || ""), name: String(model.name || ""), description: String(model.description || ""),
+        badge: String(model.badge || ""), thinking: model.thinking !== false, vision: model.vision !== false,
+        webSearch: model.webSearch !== false, context: String(model.context || ""), effortDefault: String(model.effortDefault || ""),
+        // The model's sub-agent type: on unless unticked; the three texts
+        // are optional and empty means the generated one.
+        agent: model.agent !== false, agentName: String(model.agentName || ""),
+        agentDescription: String(model.agentDescription || ""), agentPrompt: String(model.agentPrompt || "")
+      } : {});
+    },
+    customModelsModelDelete: function (providerId, modelId) {
+      return ipcRenderer.invoke("cdb-cm:model-delete", String(providerId || ""), String(modelId || ""));
+    },
+    customModelsTest: function (id) {
+      return ipcRenderer.invoke("cdb-cm:provider-test", String(id || ""));
+    },
+    customModelsModelsList: function (providerId) {
+      return ipcRenderer.invoke("cdb-cm:models-list", String(providerId || ""));
+    },
+    customModelsEffortProbe: function (providerId, modelId) {
+      return ipcRenderer.invoke("cdb-cm:effort-probe", String(providerId || ""), String(modelId || ""));
+    },
+
     // Frameless main window, no window-control buttons, no shadow. BOTH channels
     // are owned by patches/community/add_feature_window_controls.nim, not by the
     // settings patch - the same cross-patch arrangement as panelTabsRead/Set.
