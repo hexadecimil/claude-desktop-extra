@@ -177,7 +177,7 @@ Check it with `curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/gpg
 
 ## The "Extra" Settings
 
-Settings → **Extra** holds everything this project adds: **Themes**, **Community Features** (opt-in switches such as Files quick open, panel tabs, diff view modes), **Anthropic Features** (every upstream feature flag as a switch) and **Deployment** (1P/3P switch and the full third-party inference config, no `sudo` needed).
+Settings → **Extra** holds everything this project adds: **Themes**, **Community Features** (opt-in switches such as Files quick open, panel tabs, diff view modes, custom models), **Models** (the custom models editor), **Anthropic Features** (every upstream feature flag as a switch) and **Deployment** (1P/3P switch and the full third-party inference config, no `sudo` needed).
 
 ![The Extra section in Claude's Settings](docs/global/2026-07-29_20-21-extra.png)
 
@@ -203,13 +203,17 @@ Global hotkey popup (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd>) on the mon
 
 Run on Bedrock, Vertex AI, Azure AI Foundry or any Anthropic-compatible gateway, without a claude.ai login. Configure it in Settings → Extra → Deployment, or fleet-wide via `/etc/claude-desktop/managed-settings.json`. Linux guide: [docs/third-party-inference.md](docs/third-party-inference.md).
 
+## Custom Models
+
+List models served by an Anthropic-compatible endpoint (DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, a gateway) in the Code tab's model picker, next to Anthropic's own, and send the sessions that pick one there with your own key. Everything else stays on your subscription. Off by default: add providers in Settings → Extra → Models, then turn it on. Details: [docs/custom-models.md](docs/custom-models.md).
+
 ## Feature Flag Overrides (advanced)
 
 Override Anthropic's server-side feature flags in `~/.config/Claude/claude-desktop-extra.jsonc`, or flip them in Settings → Extra → Anthropic Features. Details: [docs/feature-flags.md](docs/feature-flags.md).
 
 ## Patches
 
-We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (10 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (33, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
+We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (11 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (33, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
 
 ## Command-line flags
 
