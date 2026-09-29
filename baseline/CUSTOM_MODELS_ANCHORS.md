@@ -13,7 +13,7 @@ rest on three kinds of assumptions:
 
 Build-time anchors and local shapes re-measured on **v2.9939.4** (2026-09-29). The claude.ai rows were observed live on
 2026-09-13 by the feature's author; the CLI rows were checked against **CLI 2.1.266** (2026-09-14/15) and
-re-read in **CLI 2.1.281** (2026-09-24).
+re-read in **CLI 2.1.281** (2026-09-24) and **CLI 2.1.284** (2026-09-29).
 
 ## Build-time anchors (strict counts, the build fails if one moves)
 
@@ -50,7 +50,7 @@ re-read in **CLI 2.1.281** (2026-09-24).
 | Assumption | Used for | Checked (CLI 2.1.266) | If it moves |
 |---|---|---|---|
 | The compiled Bun binary honours `BUN_OPTIONS=--preload=<file>` and is named `claude` | loading the preload at all | yes | `logs/custom-models.log` gets no `active:` line when a session opens; routing never happens |
-| Messages requests go through `globalThis.fetch(string\|URL, {body: string})` | `route()` | yes | with `CDB_CUSTOM_MODELS_DEBUG=1`: `passthrough … (Request object - not inspected)` |
+| Messages requests go through `globalThis.fetch(string\|URL, {body: string})`, or (2.1.284+, standalone build) through the `fetch` of a `Bun.FetchSession` the CLI creates with `new Bun.FetchSession(opts)`: `var ir=globalThis.fetch` is captured at start and `(r&&n===ir?r:n)(e,s)` picks the session while `globalThis.fetch` is still that value - our hook, captured after the preload ran. A gzip body (`compress:"gzip"`) is still a string | `route()` via `hook()` on both | 2.1.284: live run, CLI + preload + a local fake provider | no `->` line in `logs/custom-models.log` while the session answers "There's an issue with the selected model" (Anthropic's 404 for our id); with `CDB_CUSTOM_MODELS_DEBUG=1`, no `passthrough` line either when the CLI found a new path |
 | `/model` and `set_model` accept `^claude-\S+$`; a `[1m]` suffix means a 1M window | the `claude-<id>` aliases, the `context` modes | yes | the picker's choice is refused by the CLI; auto-compaction at 200k for a 1M model |
 | Session turns carry `thinking: {type: "enabled", budget_tokens}` (or `"adaptive"`); light work (WebFetch synthesis, the classifier) carries none | `sanitize()` forwards thinking as asked | yes | thinking lost on turns, or forced on cheap calls |
 | Server-side threads ("tether", GrowthBook `tengu_curious_tower`): a request may carry `thread: {type: "create"\|"continue", previous_message_id}` and, on a continue, only the messages after the anchor; a 400 with `error.details.error_code: "thread_unsupported_request"` makes the CLI resend the turn whole and keep that model stateless for the session | the preload refuses every routed request that carries `thread` with that code | 2.1.281 (`fne()`: `YAt(e)==="thread_unsupported_request"` → `unsupported_request` → `[tether] … resending this turn stateless`) | a custom model answers from a truncated conversation; `logs/custom-models.log` shows no `thread request … refused` line while the session loses context |

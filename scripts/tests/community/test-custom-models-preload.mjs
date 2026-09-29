@@ -52,6 +52,7 @@ function load(cfg, opts) {
     process: { env, pid: 4242, execPath: "/usr/bin/node" },
     fetch: rawFetch, Response, Headers, URL, Buffer, console
   };
+  if (opts && opts.Bun) sandbox.Bun = opts.Bun;
   sandbox.globalThis = sandbox;
   vm.runInNewContext(readFileSync(join(ROOT, "js/custom_models_preload.js"), "utf8"), vm.createContext(sandbox));
   return { api: sandbox.__cdbCustomModelsPreload, hooked: sandbox.fetch, rawFetch, calls, env };
@@ -582,6 +583,47 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
      "a custom id with no route left is traced as refused, with the routes in force");
   rmSync(dir, { recursive: true, force: true });
   rmSync(routesDir, { recursive: true, force: true });
+}
+
+// --- Bun.FetchSession (CLI 2.1.284+) --------------------------------------------
+// A standalone CLI sends its API requests through a session's fetch while
+// globalThis.fetch is the one it captured at start (our hook): the sessions
+// it creates must route too.
+{
+  const sessionCalls = [];
+  class NativeSession {
+    constructor(opts) { this.opts = opts; this.closed = false; }
+    get fetch() {
+      const self = this;
+      return function (input, init) {
+        if (!(this === self || this === undefined)) throw new TypeError("FetchSession.fetch called on another object");
+        sessionCalls.push({ url: typeof input === "string" ? input : input.href, init, opts: self.opts });
+        return Promise.resolve(new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+      };
+    }
+    close() { this.closed = true; }
+  }
+  const Bun = { FetchSession: NativeSession };
+  const { calls } = load(CONFIG, { Bun });
+  ok(Bun.FetchSession !== NativeSession, "Bun.FetchSession is replaced");
+  const s = new Bun.FetchSession({ tls: { ca: "x" } });
+  ok(s instanceof NativeSession && s.opts.tls.ca === "x", "a session is still a native one, built with the CLI's options");
+  await s.fetch(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
+  ok(sessionCalls.length === 1 && sessionCalls[0].url === "https://api.deepseek.com/anthropic/v1/messages",
+     "a custom model sent through a session reaches the provider: " + (sessionCalls[0] && sessionCalls[0].url));
+  const h0 = new Headers(sessionCalls[0] ? sessionCalls[0].init.headers : {});
+  ok(h0.get("x-api-key") === "sk-test-1234567890" && !h0.has("authorization"),
+     "with the provider's key, never the Anthropic credential");
+  ok(!!sessionCalls[0] && JSON.parse(sessionCalls[0].init.body).model === "deepseek-flash", "and the provider's model id");
+  await s.fetch(ANTHROPIC, messagesInit({ model: "claude-opus-5", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }, { compress: "gzip" }));
+  ok(sessionCalls.length === 2 && sessionCalls[1].url === ANTHROPIC && sessionCalls[1].init.headers.authorization === "Bearer sk-ant-oauth-secret" &&
+     sessionCalls[1].init.compress === "gzip",
+     "a Claude model goes through the session untouched");
+  ok(calls.length === 0, "nothing went through globalThis.fetch");
+  s.close();
+  ok(s.closed, "close() still reaches the native session");
+  const { api } = load(CONFIG, { Bun: {} });
+  ok(!!api, "no FetchSession (older Bun): the preload loads as before");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

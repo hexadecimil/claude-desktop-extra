@@ -11,7 +11,9 @@
  * Bun honours BUN_OPTIONS for compiled binaries; NODE_OPTIONS and bunfig.toml
  * are not read by them.
  *
- * What it does: replaces globalThis.fetch in the CLI process. A POST to
+ * What it does: replaces globalThis.fetch in the CLI process, and the fetch
+ * of every Bun.FetchSession the CLI creates (2.1.284+ sends its API requests
+ * through one). A POST to
  * /v1/messages whose `model` is one of the configured ids (exposed to the CLI
  * as "claude-<id>", because the CLI's set_model validator only accepts ids
  * matching ^claude-\S+$) is rewritten to the provider's Anthropic-compatible
@@ -610,18 +612,42 @@
     return rawFetch(input, Object.assign({}, init, { body: JSON.stringify(body) }));
   }
 
+  function hook(base) {
+    return function fetch(input, init) {
+      try {
+        var r = route(base, input, init);
+        if (r) return r;
+      } catch (e) {
+        log("fetch hook: " + (e && e.message) + " -> passthrough");
+      }
+      return base.call(this, input, init);
+    };
+  }
   var rawFetch = globalThis.fetch;
-  var hooked = function fetch(input, init) {
-    try {
-      var r = route(rawFetch, input, init);
-      if (r) return r;
-    } catch (e) {
-      log("fetch hook: " + (e && e.message) + " -> passthrough");
-    }
-    return rawFetch.call(this, input, init);
-  };
+  var hooked = hook(rawFetch);
   Object.keys(rawFetch).forEach(function (k) { hooked[k] = rawFetch[k]; }); // Bun: fetch.preconnect...
   globalThis.fetch = hooked;
+
+  // CLI 2.1.284+: a standalone build sends its API requests through a
+  // Bun.FetchSession (connection reuse) unless globalThis.fetch differs from
+  // the one it captured at start - which, captured after this preload ran,
+  // is our hook. So the sessions it creates route too. Their `fetch` is a
+  // non-configurable prototype getter, hence the subclass and an own property.
+  var NativeSession = typeof Bun !== "undefined" ? Bun.FetchSession : undefined;
+  if (typeof NativeSession === "function") {
+    try {
+      Bun.FetchSession = class FetchSession extends NativeSession {
+        constructor(opts) {
+          super(opts);
+          var self = this, own = this.fetch;
+          var sessionFetch = function (input, init) { return own.call(self, input, init); };
+          Object.defineProperty(this, "fetch", { value: hook(sessionFetch), writable: true, configurable: true });
+        }
+      };
+    } catch (e) {
+      log("Bun.FetchSession not hooked (" + (e && e.message) + ") - requests the CLI sends through it are not routed");
+    }
+  }
 
   log("active: " + describeRoutes() + (routesPath ? " (live from " + routesPath + ")" : ""));
 
