@@ -18,7 +18,9 @@ Unlike the 3P mode, nothing is replaced: the login, the Chat tab and the profile
   a preload in the Claude Code CLI (`BUN_OPTIONS`) forwards only those models' requests, reduced to the
   compatible subset of the Messages API. Routing is live: key, model and switch changes reach open
   sessions without a restart. Since Claude Code 2.1.284 the CLI sends its API requests through a
-  `Bun.FetchSession` rather than the global `fetch`; the preload hooks both.
+  `Bun.FetchSession` rather than the global `fetch`; the preload hooks both. Regex spellings a stricter
+  provider refuses in tool schemas (`\0`, `[\b]`, `[^]`) are sent in an equivalent form: DeepSeek
+  refused every request carrying Claude Code's `Artifact` tool.
 - Every model is also a sub-agent type Claude can launch by name, handed to local Code sessions only.
   Optional app-wide choices: the web-search model, the small/fast model (WebFetch, the classifier) and
   the default sub-agent model.

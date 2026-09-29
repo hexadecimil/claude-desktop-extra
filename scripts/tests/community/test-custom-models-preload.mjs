@@ -585,6 +585,43 @@ const ANTHROPIC = "https://api.anthropic.com/v1/messages";
   rmSync(routesDir, { recursive: true, force: true });
 }
 
+// --- tool schemas: regex spellings a stricter provider engine refuses --------------
+// DeepSeek compiles every `pattern` with a Rust regex and refuses the whole
+// request over \0 ('"^[^\\0]*$" is not a "regex"' - the Artifact tool).
+{
+  const { hooked, calls, api } = load(CONFIG);
+  const schema = {
+    type: "object",
+    properties: {
+      file_paths: { type: "array", items: { type: "string", pattern: "^[^\\0]*$" } },
+      pattern: { type: "string", description: "Grep's own parameter named pattern", default: "a\\0b" },
+      esc: { type: "string", pattern: "^\\\\0$" },
+      octal: { type: "string", pattern: "\\012" },
+      cls: { type: "string", pattern: "[\\b\\0]\\b[^]" },
+      e: { enum: ["\\0"] }
+    },
+    patternProperties: { "^x\\0": { type: "string", pattern: "\\0" } },
+    ["__proto__"]: { type: "string" }
+  };
+  const tools = [{ name: "Artifact", description: "d", input_schema: JSON.parse(JSON.stringify(schema)) }];
+  const before = JSON.stringify(tools);
+  await hooked(ANTHROPIC, messagesInit({ model: "claude-deepseek-flash", max_tokens: 10, tools, messages: [{ role: "user", content: "hi" }] }));
+  const sent = JSON.parse(calls[0].init.body).tools[0].input_schema;
+  ok(sent.properties.file_paths.items.pattern === "^[^\\x00]*$", "\\0 is sent as \\x00: " + sent.properties.file_paths.items.pattern);
+  ok(sent.properties.pattern.type === "string" && sent.properties.pattern.default === "a\\0b",
+     "a property named pattern is a schema, not a regex; default values are data and stay");
+  ok(sent.properties.esc.pattern === "^\\\\0$", "an escaped backslash followed by 0 stays");
+  ok(sent.properties.octal.pattern === "\\012", "\\0 followed by a digit (octal) stays");
+  ok(sent.properties.cls.pattern === "[\\x08\\x00]\\b[\\s\\S]", "[\\b] -> [\\x08], \\b outside a class stays, [^] -> [\\s\\S]: " + sent.properties.cls.pattern);
+  ok(sent.properties.e.enum[0] === "\\0", "enum values stay");
+  ok(sent.patternProperties["^x\\x00"] && sent.patternProperties["^x\\x00"].pattern === "\\x00", "patternProperties keys and their schemas too");
+  ok(Object.prototype.hasOwnProperty.call(sent, "__proto__") && sent.__proto__.type === "string", "a property named __proto__ survives the copy");
+  ok(JSON.stringify(tools) === before, "the CLI's own tool list is not modified");
+  await hooked(ANTHROPIC, messagesInit({ model: "claude-opus-5", max_tokens: 10, tools, messages: [{ role: "user", content: "hi" }] }));
+  ok(JSON.parse(calls[1].init.body).tools[0].input_schema.properties.file_paths.items.pattern === "^[^\\0]*$",
+     "a Claude request keeps the schema exactly as the CLI wrote it");
+}
+
 // --- Bun.FetchSession (CLI 2.1.284+) --------------------------------------------
 // A standalone CLI sends its API requests through a session's fetch while
 // globalThis.fetch is the one it captured at start (our hook): the sessions

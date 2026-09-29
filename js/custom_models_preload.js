@@ -305,6 +305,51 @@
 
   var WEB_SEARCH_KEYS = ["max_uses", "allowed_domains", "blocked_domains", "user_location"];
 
+  // A tool schema's `pattern` is an ECMAScript regex, and a provider may
+  // compile it with a stricter engine: DeepSeek refuses the whole request
+  // ('"^[^\\0]*$" is not a "regex"' - the Artifact tool's file_paths) over
+  // spellings a Rust regex does not take. Three have an exact equivalent it
+  // does: \0 (NUL) -> \x00, [\b] (backspace) -> [\x08], [^] (any char) ->
+  // [\s\S]. Anything else is copied as is.
+  function portableRegex(src) {
+    var out = "", inClass = false;
+    for (var i = 0; i < src.length; i++) {
+      var c = src[i];
+      if (c === "\\" && i + 1 < src.length) {
+        var n = src[i + 1];
+        if (n === "0" && !/[0-9]/.test(src[i + 2] || "")) out += "\\x00";
+        else if (n === "b" && inClass) out += "\\x08";
+        else out += c + n;
+        i++;
+        continue;
+      }
+      if (!inClass && c === "[") {
+        if (src.slice(i, i + 3) === "[^]") { out += "[\\s\\S]"; i += 2; continue; }
+        inClass = true;
+      } else if (inClass && c === "]") inClass = false;
+      out += c;
+    }
+    return out;
+  }
+  // A copy of the schema with every `pattern` (and patternProperties key)
+  // made portable. Values that are data, not schema, are left alone.
+  var SCHEMA_DATA_KEYS = { "default": 1, "const": 1, "enum": 1, "examples": 1 };
+  function portableSchema(v) {
+    if (Array.isArray(v)) return v.map(portableSchema);
+    if (!v || typeof v !== "object") return v;
+    var o = Object.create(null); // a property named __proto__ stays a property
+    Object.keys(v).forEach(function (k) {
+      var x = v[k];
+      if (SCHEMA_DATA_KEYS[k] === 1) o[k] = x;
+      else if (k === "pattern" && typeof x === "string") o[k] = portableRegex(x);
+      else if (k === "patternProperties" && x && typeof x === "object" && !Array.isArray(x)) {
+        o[k] = Object.create(null);
+        Object.keys(x).forEach(function (re) { o[k][portableRegex(re)] = portableSchema(x[re]); });
+      } else o[k] = portableSchema(x);
+    });
+    return o;
+  }
+
   function sanitize(body, route, opts) {
     var m = route.model, p = route.provider;
     var out = { model: m.id };
@@ -325,7 +370,7 @@
             (/^web_search/.test(t.type || "") && m.webSearch !== false));
       }).map(function (t) {
         if (!/^web_search/.test(t.type || "")) {
-          return { name: t.name, description: typeof t.description === "string" ? t.description : "", input_schema: t.input_schema };
+          return { name: t.name, description: typeof t.description === "string" ? t.description : "", input_schema: portableSchema(t.input_schema) };
         }
         // Anthropic's server-side tool, with the options it documents - the
         // CLI's domain filters and use cap included.
