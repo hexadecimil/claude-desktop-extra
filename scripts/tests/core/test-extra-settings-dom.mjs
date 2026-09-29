@@ -203,11 +203,11 @@ const FIXTURE_BARE = dialog(`
 const DRIVER = String.raw`
 var SVGNS = "http://www.w3.org/2000/svg";
 var ICON_SEL = '[data-cds="Icon"]';
-var LABELS = ["Themes", "Community", "Anthropic", "Deployment"];
-// Upstream's nav column is narrow and truncates, so the two long names are
+var LABELS = ["Themes", "Community", "Models", "Anthropic", "Deployment"];
+// Upstream's nav column is narrow and truncates, so the long names are
 // shortened there and carried in a tooltip instead. The panels keep the full
-// name in their h1 - asserted in featuresPanel()/flagsPanel() below.
-var TOOLTIPS = { Community: "Community Features", Anthropic: "Anthropic Features" };
+// name in their h1 - asserted in featuresPanel()/modelsPanel()/flagsPanel() below.
+var TOOLTIPS = { Community: "Community Features", Models: "Custom models", Anthropic: "Anthropic Features" };
 
 function navbox() { return document.getElementById("navbox"); }
 
@@ -364,6 +364,26 @@ async function featuresPanel(featuresItem) {
     ok(window.__quickOpenCalls.length === 1 && window.__quickOpenCalls[0] === true,
        "clicking it calls quickOpenSet(true) exactly once: " + JSON.stringify(window.__quickOpenCalls));
     ok(qo.getAttribute("aria-checked") === "true", "the switch reflects the write");
+  }
+
+  const cmSel = '.cdbx-switch[aria-label="list custom Anthropic-compatible models in the Code model picker"]';
+  const cm = panel.querySelector(cmSel);
+  ok(!!cm, "renders the Custom models switch");
+  if (cm) {
+    const cmRow = cm.closest(".cdbx-row");
+    ok(cmRow.querySelector(".cdbx-id").textContent === "Custom models", "titled Custom models");
+    ok(cm.getAttribute("aria-checked") === "false", "off in the fixture");
+    const cmState = cmRow.querySelector(".cdbx-state").textContent;
+    ok(cmState === "off - 2 models from 1 provider configured",
+       "the state line counts the configured models and providers: " + cmState);
+
+    cm.click();
+    await sleep(60);
+    ok(window.__customModelsCalls.length === 1 && window.__customModelsCalls[0] === true,
+       "clicking it calls customModelsSet(true) exactly once: " + JSON.stringify(window.__customModelsCalls));
+    ok(cm.getAttribute("aria-checked") === "true", "the switch reflects the write");
+    ok(cmRow.querySelector(".cdbx-state").textContent === "on - 2 models from 1 provider",
+       "the state line follows the flip: " + cmRow.querySelector(".cdbx-state").textContent);
   }
 
   // --- the two window modes. Three mutually exclusive outcomes behind two
@@ -698,6 +718,333 @@ async function featuresPanel(featuresItem) {
 // Anthropic Features: everything that used to sit below our own switches -
 // Anthropic's GrowthBook flags, the restart notice they need, the filter over
 // them and the one config file the panel links.
+// The Models panel: providers and models drawn from the bridge's state, the
+// forms that write them back, and the write-only key. Every assertion is
+// observable DOM or a recorded bridge call.
+async function modelsPanel(modelsItem) {
+  window.__cmConfig = { ok: true, enabled: true, configured: true, lockedByJsonc: false, source: "default",
+    surfaces: ["ccd", "code"], models: 2, webSearch: "claude-deepseek-flash", webSearchLocked: false,
+    smallFastModel: "", smallFastModelLocked: false,
+    searchConflict: "gw-model is marked without the web search tool. Pick a web-search model to search from any session.",
+    subagentModel: "", subagentModelLocked: false, announce: true, announceLocked: false,
+    announceText: "Custom models available in this app (claude-desktop-extra), served by the user's own providers: claude-deepseek-flash[1m] (DeepSeek Flash, deepseek; sub-agent type deepseek-flash).",
+    anthropicModels: [{ id: "claude-opus-5", name: "Opus 5" }, { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }],
+    presets: [{ id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", keyHint: "sk-...",
+      modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m" }],
+    paths: { json: "/home/u/.config/Claude/claude-desktop-extra.json", jsonc: "/home/u/.config/Claude/claude-desktop-extra.jsonc",
+      secrets: "/home/u/.config/Claude/custom-models/secrets.json", routes: "/home/u/.config/Claude/custom-models/routes.json" },
+    providers: [
+      { id: "deepseek", baseUrl: "https://api.deepseek.com/anthropic", locked: false, keyOk: true, keySource: "stored", preset: "deepseek", modelsUrl: "https://api.deepseek.com/v1/models", effort: ["low", "high", "max"], context: "1m",
+        models: [{ id: "deepseek-flash", alias: "claude-deepseek-flash", listedAs: ["claude-deepseek-flash[1m]"], name: "DeepSeek Flash", description: "", vision: true, thinking: true, context: "1m", effort: ["low", "high", "max"], effortDefault: "max", badge: "",
+          agent: true, agentName: "deepseek-flash", agentDescription: "", agentPrompt: "", agentDefaults: { name: "deepseek-flash", description: "Sub-agent running on DeepSeek Flash via deepseek, a custom model outside Anthropic's.", prompt: "You are a sub-agent running on DeepSeek Flash." } }] },
+      { id: "gw", baseUrl: "https://gw.example/anthropic", locked: true, keyOk: false, keySource: "none", effort: ["low", "medium", "high", "xhigh", "max"], context: "200k",
+        models: [{ id: "gw-model", alias: "claude-gw-model", listedAs: ["claude-gw-model"], name: "gw-model", description: "", vision: false, thinking: false, webSearch: false, context: "200k", effortDefault: "", badge: "", agent: false, agentName: "", agentDescription: "", agentPrompt: "" }] }
+    ] };
+  window.__cmWrites = [];
+  modelsItem.click();
+  await sleep(120);
+  const panel = document.querySelector(".cdbx-panel");
+  ok(!!panel, "the Models panel is mounted");
+  if (!panel) return;
+  ok(panel.querySelector(".cdbx-h1").textContent === "Custom models", "the heading spells the full name out");
+  const state = panel.querySelector(".cdbx-state");
+  ok(!!state && /^On - 2 models from 2 providers/.test(state.textContent), "the state line counts models and providers: " + (state && state.textContent));
+  const reloadBtn = panel.querySelector(".cdbx-models-reload");
+  ok(!!reloadBtn && reloadBtn.textContent === "Reload the Code tab" && /picker/.test(reloadBtn.title),
+     "a Reload the Code tab button sits next to the switch (the picker is drawn from the page's bootstrap)");
+  {
+    // The dialog is closed first (Escape on the document, as a hand would), or
+    // the reloaded page reopens it on its first section.
+    let escapes = 0, reloads = 0;
+    const onKey = (ev) => { if (ev.key === "Escape") escapes++; };
+    const onReload = (ev) => { reloads++; ev.preventDefault(); }; // a real reload would restart this very page
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("cdbx:reload", onReload);
+    reloadBtn.click();
+    document.removeEventListener("keydown", onKey);
+    document.removeEventListener("cdbx:reload", onReload);
+    ok(escapes === 1 && reloads === 1, "Reload the Code tab sends Escape to the settings dialog, then reloads (cancelable cdbx:reload event)");
+    await sleep(200);
+  }
+  ok(/reach open sessions at once/.test(panel.querySelector(".cdbx-models-files").textContent) &&
+     /custom-models\/routes\.json/.test(panel.querySelector(".cdbx-models-files").textContent),
+     "the footer says routing is live and names the routes file");
+  {
+    // Like every panel, it ends in the files behind it, as links.
+    const links = Array.from(panel.querySelectorAll(".cdbx-pathrow .cdbx-pathlink")).map((b) => b.textContent);
+    ok(links.indexOf("/home/u/.config/Claude/claude-desktop-extra.json") >= 0 && links.indexOf("/home/u/.config/Claude/claude-desktop-extra.jsonc") >= 0 &&
+       links.indexOf("/home/u/.config/Claude/custom-models/secrets.json") < 0,
+       "the panel ends in clickable rows for the .json and the .jsonc (not the secrets file): " + JSON.stringify(links));
+    // The web-search warning sits in the web-search row.
+    const warn = panel.querySelector(".cdbx-models-warn");
+    ok(!!warn && /marked without the web search tool/.test(warn.textContent) && !!warn.closest(".cdbx-row") &&
+       !warn.closest(".cdbx-row").querySelector("select.cdbx-models-smallfast"),
+       "a searchConflict from the main side shows as a warning in the web-search row");
+  }
+  const cards = panel.querySelectorAll(".cdbx-models-card");
+  ok(cards.length === 2, "one card per provider (" + cards.length + ")");
+  if (cards.length !== 2) return;
+  ok(cards[0].querySelector(".cdbx-id").textContent === "deepseek", "the editable provider is titled by its id");
+  ok(/API key: stored/.test(cards[0].querySelector(".cdbx-state").textContent), "its key line says stored");
+  const ws = panel.querySelector("select.cdbx-select");
+  ok(!!ws && ws.value === "claude-deepseek-flash" && ws.options.length === 4 && ws.options[0].value === "" &&
+     ws.options[1].textContent === "deepseek / DeepSeek Flash" && ws.options[2].value === "claude-opus-5" && ws.options[3].textContent === "Anthropic / Haiku 4.5",
+     "the web-search select: the default, the custom models, then the Anthropic ones; current one selected (" + ws.options.length + ")");
+  ok(!Array.from(ws.options).some((o) => o.value === "claude-gw-model"), "a model marked without the web search tool is not offered");
+  ws.value = "";
+  ws.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("websearch-set:") >= 0, "picking Anthropic writes an empty value");
+  window.__cmWrites = [];
+  // The Small / fast model section: the ANTHROPIC_SMALL_FAST_MODEL slot. Unlike
+  // the web-search select above it, every configured model qualifies - a model
+  // marked without the web search tool is offered here.
+  const sf = panel.querySelector("select.cdbx-models-smallfast");
+  ok(!!sf && sf.value === "" && sf.options[0].value === "" && /Anthropic's default/.test(sf.options[0].textContent),
+     "the small/fast select defaults to Anthropic, first option the default (" + (sf && sf.options.length) + ")");
+  ok(Array.from(sf.options).some((o) => o.value === "claude-gw-model"),
+     "a model without the web search tool IS offered for the small/fast slot (it is not web search)");
+  sf.value = "claude-deepseek-flash";
+  sf.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("smallfast-set:claude-deepseek-flash") >= 0, "picking a model writes the small/fast alias: " + JSON.stringify(window.__cmWrites));
+  window.__cmWrites = [];
+  // The Sub-agents section: the default sub-agent model and the announce line.
+  const sa = panel.querySelector("select.cdbx-models-subagent");
+  ok(!!sa && sa.value === "" && sa.options.length === 3 && /Claude Code's default/.test(sa.options[0].textContent) &&
+     sa.options[1].value === "claude-deepseek-flash" && sa.options[2].textContent === "gw / gw-model",
+     "the default sub-agent model select: the CLI's default, then every custom model (" + (sa && sa.options.length) + ")");
+  ok(!!sa && /general-purpose and Plan/.test(sa.closest(".cdbx-row").querySelector(".cdbx-note").textContent) &&
+     /Explore is pinned/.test(sa.closest(".cdbx-row").querySelector(".cdbx-note").textContent),
+     "its note names the built-in types it affects, and the one it does not");
+  sa.value = "claude-deepseek-flash";
+  sa.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("subagent-set:claude-deepseek-flash") >= 0, "picking a model writes its alias: " + JSON.stringify(window.__cmWrites));
+  window.__cmWrites = [];
+  const an = panel.querySelector("input.cdbx-models-announce-box");
+  ok(!!an && an.checked && !an.disabled, "Tell Claude about custom models is a ticked checkbox");
+  const anText = panel.querySelector(".cdbx-models-announce");
+  ok(!!anText && /^Custom models available in this app/.test(anText.textContent) && /sub-agent type deepseek-flash/.test(anText.textContent),
+     "and the line new sessions get is shown under it");
+  an.checked = false;
+  an.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(40);
+  ok(window.__cmWrites.indexOf("announce-set:false") >= 0, "unticking writes false: " + JSON.stringify(window.__cmWrites));
+  window.__cmWrites = [];
+  ok(/handed to each session as it opens/.test(panel.querySelector(".cdbx-models-files").textContent),
+     "the footer says the sub-agent settings apply to sessions opened afterwards");
+  ok(cards[1].classList.contains("cdbx-models-locked") && /set in claude-desktop-extra\.jsonc/.test(cards[1].querySelector(".cdbx-id").textContent),
+     "the .jsonc provider is drawn locked and says so");
+  ok(/MISSING/.test(cards[1].querySelector(".cdbx-state").textContent), "a provider without a key says so");
+  ok(!cards[1].querySelector(".cdbx-models-add") && !Array.from(cards[1].querySelectorAll("button")).some((b) => b.textContent === "remove"),
+     "a locked provider offers neither Add a model nor remove");
+  const row = cards[0].querySelector(".cdbx-models-list .cdbx-row");
+  ok(!!row && /in the picker as claude-deepseek-flash\[1m\] - 1M context/.test(row.querySelector(".cdbx-note").textContent) &&
+     /default effort max/.test(row.querySelector(".cdbx-note").textContent), "the model row states the id it is listed under, its context and default effort: " + row.querySelector(".cdbx-note").textContent);
+  ok(/sub-agent type deepseek-flash/.test(row.querySelector(".cdbx-note").textContent), "and its sub-agent type");
+  ok(/no sub-agent type/.test(cards[1].querySelector(".cdbx-models-list .cdbx-row .cdbx-note").textContent), "a model without one says so");
+  ok(/in the picker as claude-gw-model - 200k context/.test(cards[1].querySelector(".cdbx-models-list .cdbx-row .cdbx-note").textContent),
+     "a 200k model says so");
+  ok(/effort levels low\/high\/max/.test(cards[0].querySelector(".cdbx-state").textContent), "the provider card states its effort levels");
+
+  // Add a model: the form's fields reach the bridge as typed.
+  cards[0].querySelector(".cdbx-models-add").click();
+  await sleep(30);
+  const form = cards[0].querySelector(".cdbx-models-form-model-new");
+  ok(!!form, "Add a model opens a form inside the card");
+  if (form) {
+    const inputs = form.querySelectorAll("input.cdbx-input");
+    inputs[0].value = "deepseek-pro";
+    inputs[1].value = "DeepSeek Pro";
+    ok(!form.querySelector(".cdbx-models-level"), "a model form has no effort-level boxes - they belong to the provider");
+    const selects = form.querySelectorAll("select");
+    const effortSel = selects[0], contextSel = selects[1];
+    ok(Array.from(effortSel.options).map((o) => o.value).join(",") === "low,high,max" && effortSel.value === "max",
+       "the default select lists the provider's levels, the highest preselected: " + effortSel.value);
+    effortSel.value = "high";
+    ok(!!contextSel && Array.from(contextSel.options).map((o) => o.value).join(",") === "200k,1m,both" && contextSel.value === "1m",
+       "the context select offers 200k / 1M / both, the provider's (preset) value preselected: " + (contextSel && contextSel.value));
+    const ctxNote = contextSel.closest(".cdbx-models-field").querySelector(".cdbx-note");
+    ok(!!ctxNote && /reads only the id/.test(ctxNote.textContent) && /\[1m\]/.test(ctxNote.textContent) && /Preset default: 1m/.test(ctxNote.textContent),
+       "the context help explains the CLI reads the id, the [1m] spelling and the preset default");
+    contextSel.value = "both";
+    const boxes = form.querySelectorAll(".cdbx-models-field > .cdbx-row-aside > input[type=checkbox]");
+    boxes[1].checked = false; // images off
+    boxes[2].checked = false; // web search tool off
+    ok(boxes.length === 4 && boxes[3].checked, "the form offers the sub-agent type, ticked by default (" + boxes.length + " boxes)");
+    const agentPrompt = form.querySelector("textarea.cdbx-models-agent-prompt");
+    ok(!!agentPrompt && agentPrompt.placeholder === "generated" && inputs.length === 6 && /generated from the display name/.test(inputs[4].placeholder),
+       "with a name, a description and a prompt, the generated ones as placeholders");
+    inputs[4].value = "Pro-Fanout";
+    inputs[5].value = "Fan-out only, never a judge";
+    agentPrompt.value = "Do the step.";
+    Array.from(form.querySelectorAll("button")).find((b) => b.textContent === "Add model").click();
+    await sleep(60);
+    ok(window.__cmWrites.indexOf("model-set:deepseek:deepseek-pro:DeepSeek Pro:true:false:high:false:both") >= 0,
+       "Add model sends provider id, model id, name, thinking, images, effort default, web search and context: " + JSON.stringify(window.__cmWrites));
+    ok(window.__cmWrites.indexOf("model-agent:deepseek:deepseek-pro:true:Pro-Fanout:Fan-out only, never a judge:Do the step.") >= 0,
+       "and the sub-agent fields as typed: " + JSON.stringify(window.__cmWrites));
+  }
+
+  // Add a provider: a button opens the form; the preset prefills, the key
+  // travels only when typed.
+  ok(!panel.querySelector(".cdbx-models-form-provider-new"), "the provider form is not open until asked");
+  panel.querySelector(".cdbx-models-add-provider").click();
+  await sleep(30);
+  const addForm = panel.querySelector(".cdbx-models-form-provider-new");
+  ok(!!addForm, "Add a provider opens the form under the button");
+  if (addForm) {
+    const preset = addForm.querySelector("select");
+    preset.value = "deepseek";
+    preset.dispatchEvent(new Event("change", { bubbles: true }));
+    const f = addForm.querySelectorAll("input.cdbx-input");
+    ok(f[0].value === "deepseek" && f[1].value === "https://api.deepseek.com/anthropic" && f[3].value === "https://api.deepseek.com/v1/models" && f.length === 4,
+       "the preset prefills id, base URL and models URL");
+    const plv = addForm.querySelectorAll(".cdbx-models-level input[type=checkbox]");
+    ok(plv.length === 5 && Array.from(plv).map((c) => c.checked).join(",") === "true,false,true,false,true",
+       "and ticks the effort levels it knows (low/high/max)");
+    const pdetect = Array.from(addForm.querySelectorAll("button")).find((b) => b.textContent === "detect");
+    ok(!!pdetect && pdetect.disabled, "detect waits for the provider to exist with a key and a model");
+    ok(f[2].type === "password" && f[2].value === "", "the key field is a password field and starts empty");
+    f[0].value = "ds2";
+    f[2].value = "sk-secret-123456";
+    Array.from(addForm.querySelectorAll("button")).find((b) => b.textContent === "Add provider").click();
+    await sleep(80);
+    ok(window.__cmWrites.some((w) => w === "provider-set:ds2:https://api.deepseek.com/anthropic:key:deepseek:https://api.deepseek.com/v1/models:low/high/max"),
+       "Add provider sends the id, URL, key, preset, models URL and effort levels: " + JSON.stringify(window.__cmWrites));
+    ok(!window.__cmWrites.some((w) => /^model-set:ds2/.test(w)), "no model is added silently - fetch models is the next step");
+    ok(!/sk-secret-123456/.test(panel.textContent), "the key never appears in the panel");
+    // By hand (no preset): the provider alone, the card's Add a model is next.
+    window.__cmWrites = [];
+    panel.querySelector(".cdbx-models-add-provider").click();
+    await sleep(30);
+    const addForm2 = panel.querySelector(".cdbx-models-form-provider-new");
+    const g = addForm2.querySelectorAll("input.cdbx-input");
+    g[0].value = "gw2"; g[1].value = "https://gw.example/anthropic";
+    Array.from(addForm2.querySelectorAll("button")).find((b) => b.textContent === "Add provider").click();
+    await sleep(80);
+    ok(window.__cmWrites.length === 1 && window.__cmWrites[0] === "provider-set:gw2:https://gw.example/anthropic:nokey:::low/medium/high/xhigh/max",
+       "by hand: only the provider is created, no preset, all five levels: " + JSON.stringify(window.__cmWrites));
+
+  // Edit the existing provider: detect is live there and ticks what the
+  // provider accepted.
+  window.__cmWrites = [];
+  // The panel redraws after every write, so re-query the card.
+  const card0 = panel.querySelectorAll(".cdbx-models-card")[0];
+  Array.from(card0.querySelectorAll(".cdbx-row-aside button")).find((b) => b.textContent === "edit").click();
+  await sleep(30);
+  const editForm = card0.querySelector(".cdbx-models-form");
+  ok(!!editForm, "edit opens the provider form in the card");
+  if (editForm) {
+    const edetect = Array.from(editForm.querySelectorAll("button")).find((b) => b.textContent === "detect");
+    ok(!!edetect && !edetect.disabled, "detect is live on a saved provider with a key and a model");
+    edetect.click();
+    await sleep(60);
+    ok(window.__cmWrites.indexOf("probe:deepseek:") >= 0, "detect probes the provider (its first model)");
+    const elv = editForm.querySelectorAll(".cdbx-models-level input[type=checkbox]");
+    ok(Array.from(elv).map((c) => c.checked).join(",") === "true,false,false,false,true", "the boxes follow the provider's answer");
+    Array.from(editForm.querySelectorAll("button")).find((b) => b.textContent === "cancel").click();
+  }
+  {
+    // A save that moved the base URL to another host: the main side cleared
+    // the key, and the toast asks for it again.
+    const cfg = window.__cmConfig;
+    window.__cmConfig = Object.assign({}, cfg, { keyCleared: true });
+    const cardE = panel.querySelectorAll(".cdbx-models-card")[0];
+    Array.from(cardE.querySelectorAll(".cdbx-row-aside button")).find((b) => b.textContent === "edit").click();
+    await sleep(30);
+    const f2 = cardE.querySelector(".cdbx-models-form");
+    const save = f2 && Array.from(f2.querySelectorAll("button")).find((b) => b.textContent === "Save");
+    if (save) { save.click(); await sleep(60); }
+    const toastEl = document.querySelector(".cdbx-toast");
+    ok(!!toastEl && /stored key was cleared: paste the key again/.test(toastEl.textContent) && /cdbx-toast-bad/.test(toastEl.className),
+       "a key cleared by a host change is announced: " + (toastEl && toastEl.textContent));
+    window.__cmConfig = cfg;
+    await sleep(20);
+  }
+
+  // Fetch models: the provider's list as a checklist, added ones disabled,
+  // the picked ones added with the preset's effort levels.
+  window.__cmWrites = [];
+  const cardF = panel.querySelectorAll(".cdbx-models-card")[0];
+  const fetchBtn = Array.from(cardF.querySelectorAll("button")).find((b) => b.textContent === "Fetch models");
+  ok(!!fetchBtn && !fetchBtn.disabled, "Fetch models is offered on a provider with a key");
+  fetchBtn.click();
+  await sleep(60);
+  const fetched = cardF.querySelector(".cdbx-models-fetched");
+  ok(!!fetched && window.__cmWrites.indexOf("list:deepseek") >= 0, "the list is asked from the bridge and shown in the card");
+  if (fetched) {
+    const cbs = fetched.querySelectorAll("input[type=checkbox]");
+    ok(cbs.length === 2 && cbs[0].checked && cbs[0].disabled && !cbs[1].checked, "the already-configured model is ticked and disabled, the other free");
+    cbs[1].checked = true;
+    Array.from(fetched.querySelectorAll("button")).find((b) => b.textContent === "Add selected").click();
+    await sleep(80);
+    ok(window.__cmWrites.some((w) => /^model-set:deepseek:deepseek-v4-pro:/.test(w)),
+       "Add selected creates the ticked model: " + JSON.stringify(window.__cmWrites));
+    ok(!fetched.querySelector(".cdbx-models-filter"), "a short list has no filter box");
+  }
+  // A long listing (a gateway) gets a filter box; a stated 1M context is
+  // shown and travels with the added model.
+  window.__cmModelsList = { ok: true, source: "https://openrouter.ai/api/v1/models", models: Array.from({ length: 14 }, (_, i) => (
+    i === 0 ? { id: "qwen/qwen3.8-max-0902", name: "Qwen: Qwen3.8 Max", context: "1m" }
+    : i === 1 ? { id: "z-ai/glm-5.3", name: "Z.ai: GLM 5.3", context: "1m" }
+    : { id: "vendor/model-" + i, name: "Model " + i, context: "200k" })) };
+  window.__cmWrites = [];
+  fetchBtn.click();
+  await sleep(60);
+  const fetched2 = cardF.querySelector(".cdbx-models-fetched");
+  const filt = fetched2 && fetched2.querySelector(".cdbx-models-filter");
+  ok(!!filt, "a listing of more than 12 models gets a filter box");
+  if (filt) {
+    const labels = Array.from(fetched2.querySelectorAll(".cdbx-models-level"));
+    ok(labels.length === 14 && /qwen\/qwen3\.8-max-0902 \(Qwen: Qwen3\.8 Max\) - 1M/.test(labels[0].textContent) && !/1M/.test(labels[2].textContent),
+       "each entry shows id, name and 1M when the listing states it: " + labels[0].textContent);
+    filt.value = "glm";
+    filt.dispatchEvent(new Event("input", { bubbles: true }));
+    ok(labels.filter((l) => !l.hidden).length === 1 && /glm-5\.3/.test(labels.find((l) => !l.hidden).textContent), "the filter narrows the checklist by id or name");
+    filt.value = "";
+    filt.dispatchEvent(new Event("input", { bubbles: true }));
+    ok(labels.every((l) => !l.hidden), "an empty filter shows everything again");
+    labels[0].querySelector("input").checked = true;
+    Array.from(fetched2.querySelectorAll("button")).find((b) => b.textContent === "Add selected").click();
+    await sleep(80);
+    ok(window.__cmWrites.some((w) => w === "model-set:deepseek:qwen/qwen3.8-max-0902:Qwen: Qwen3.8 Max:undefined:undefined:undefined:undefined:1m"),
+       "a listed model is added with its name and the listing's context: " + JSON.stringify(window.__cmWrites));
+  }
+  window.__cmModelsList = null;
+  }
+
+  // Test and remove on the editable provider.
+  const btns = Array.from(panel.querySelectorAll(".cdbx-models-card")[0].querySelectorAll(".cdbx-row-aside button"));
+  const test = btns.find((b) => b.textContent === "test");
+  ok(!!test && !test.disabled, "test is offered on a provider with a key and a model");
+  if (test) {
+    test.click(); await sleep(40);
+    ok(window.__cmWrites.indexOf("test:deepseek") >= 0, "test calls the bridge");
+    const line = panel.querySelectorAll(".cdbx-models-card")[0].querySelector(".cdbx-models-testline");
+    ok(!!line && !line.hidden && /answered \(deepseek-flash, HTTP 200\)/.test(line.textContent), "the result stays on the card: " + (line && line.textContent));
+  }
+  // The locked card has no key: test says so on the card instead of staying mute.
+  const lockedTest = Array.from(panel.querySelectorAll(".cdbx-models-card")[1].querySelectorAll(".cdbx-row-aside button")).find((b) => b.textContent === "test");
+  if (lockedTest) {
+    window.__cmWrites = [];
+    lockedTest.click(); await sleep(20);
+    const line2 = panel.querySelectorAll(".cdbx-models-card")[1].querySelector(".cdbx-models-testline");
+    ok(!!line2 && !line2.hidden && /no API key/.test(line2.textContent) && window.__cmWrites.indexOf("test:gw") < 0,
+       "test without a key explains instead of calling the bridge: " + (line2 && line2.textContent));
+  }
+  const rm = btns.find((b) => b.textContent === "remove");
+  if (rm) {
+    rm.click();
+    await sleep(20);
+    ok(rm.textContent === "remove? click again" && window.__cmWrites.indexOf("provider-delete:deepseek") < 0, "remove asks for a second click");
+    rm.click();
+    await sleep(40);
+    ok(window.__cmWrites.indexOf("provider-delete:deepseek") >= 0, "the second click deletes");
+  }
+}
+
 async function flagsPanel(flagsItem) {
   flagsItem.click();
   await sleep(140);
@@ -1347,8 +1694,9 @@ async function run() {
     if (kind === "real") {
       await themesPanel(items[0]);
       await featuresPanel(items[1]);
-      await flagsPanel(items[2]);
-      await deployPanel(items[3]);
+      await modelsPanel(items[2]);
+      await flagsPanel(items[3]);
+      await deployPanel(items[4]);
     }
     return;
   }
@@ -1709,6 +2057,25 @@ window.cdbExtra = {
   },
   quickOpenRead: function () { return Promise.resolve(window.__quickOpenState || { ok: true, enabled: false, lockedByJsonc: false, source: "default" }); },
   quickOpenSet: function (enabled) { window.__quickOpenCalls = (window.__quickOpenCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled }); },
+  // Custom models: the read carries the config summary the state line is built
+  // from (how many models, from how many providers, which of them lack a key).
+  customModelsRead: function () { return Promise.resolve(window.__customModelsState || { ok: true, enabled: false, configured: true, lockedByJsonc: false, source: "default", surfaces: ["code"], models: 2, providers: [{ id: "deepseek", models: 2, keyOk: true }] }); },
+  customModelsSet: function (enabled) { window.__customModelsCalls = (window.__customModelsCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled, configured: true, models: 2, providers: [{ id: "deepseek", models: 2, keyOk: true }] }); },
+  // The Models panel: one editable provider with a model, one locked (.jsonc)
+  // provider without a key. Writes are recorded and answered with the same
+  // state, which is what the panel redraws from.
+  customModelsConfig: function () { return Promise.resolve(window.__cmConfig); },
+  customModelsProviderSet: function (p) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-set:" + p.id + ":" + p.baseUrl + ":" + (p.apiKey ? "key" : "nokey") + ":" + p.preset + ":" + p.modelsUrl + ":" + (p.effort ? p.effort.join("/") : "-")]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelsList: function (pid) { window.__cmWrites = (window.__cmWrites || []).concat(["list:" + pid]); return Promise.resolve(window.__cmModelsList || { ok: true, source: "https://api.deepseek.com/v1/models", models: [{ id: "deepseek-flash", name: "deepseek-flash" }, { id: "deepseek-v4-pro", name: "deepseek-v4-pro" }] }); },
+  customModelsWebSearchSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["websearch-set:" + v]); return Promise.resolve(window.__cmConfig); },
+  customModelsSmallFastSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["smallfast-set:" + v]); return Promise.resolve(window.__cmConfig); },
+  customModelsProviderDelete: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["provider-delete:" + id]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelSet: function (pid, m) { window.__cmWrites = (window.__cmWrites || []).concat(["model-set:" + pid + ":" + m.id + ":" + m.name + ":" + m.thinking + ":" + m.vision + ":" + m.effortDefault + ":" + m.webSearch + (m.context ? ":" + m.context : "")]); if ("agent" in m) window.__cmWrites.push("model-agent:" + pid + ":" + m.id + ":" + m.agent + ":" + m.agentName + ":" + m.agentDescription + ":" + m.agentPrompt); return Promise.resolve(window.__cmConfig); },
+  customModelsSubagentSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["subagent-set:" + v]); return Promise.resolve(window.__cmConfig); },
+  customModelsAnnounceSet: function (v) { window.__cmWrites = (window.__cmWrites || []).concat(["announce-set:" + v]); return Promise.resolve(window.__cmConfig); },
+  customModelsModelDelete: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["model-delete:" + pid + ":" + mid]); return Promise.resolve(window.__cmConfig); },
+  customModelsTest: function (id) { window.__cmWrites = (window.__cmWrites || []).concat(["test:" + id]); return Promise.resolve({ ok: true, status: 200, model: "deepseek-flash" }); },
+  customModelsEffortProbe: function (pid, mid) { window.__cmWrites = (window.__cmWrites || []).concat(["probe:" + pid + ":" + mid]); return Promise.resolve({ ok: true, accepted: ["low", "max"], rejected: { medium: "x", high: "x", xhigh: "x" } }); },
   // The two window modes. Three fields the page treats as three different
   // facts, so a fixture that conflated any of them could not tell the states
   // apart: "enabled" is the SAVED setting, "active" what this window was built
