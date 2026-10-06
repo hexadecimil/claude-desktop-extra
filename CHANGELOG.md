@@ -2,6 +2,44 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-10-06
+
+### Upstream v2.19675.1
+
+- **New dependency: PipeWire.** The official native module now links
+  `libpipewire-0.3.so.0` (upstream's `.deb` added `libpipewire-0.3-0`), and the
+  app does not start its file containment without it. Every package now
+  declares it.
+- **glibc 2.34 floor kept.** The same module also asks for glibc 2.39 (for two
+  optional functions), so it failed to load on RHEL 9, Ubuntu 22.04 and Debian
+  12 and file access through it refused to work. The build now marks that
+  requirement optional, and CI checks the result for x86_64 and aarch64.
+- **Computer Use:** the official build now ships its own Linux Computer Use
+  (XTest on X11, RemoteDesktop portal on Wayland), as a per-account rollout that
+  needs GNOME 46+ or a current Plasma and skips wlroots. Our bridges stay on for
+  every account and every session type and take precedence; `fix_computer_use_linux`
+  was re-fitted to the new gates and screenshot wording.
+- **Profiles:** upstream now sets the main window title itself on every
+  navigation, which dropped the `(work)` suffix. `fix_profile_window_title`
+  now wraps that window's `setTitle`, so the suffix stays.
+- **Removed, upstream ships it:** `fix_detected_projects_linux` (Recent Projects
+  now finds VS Code, Cursor and Zed under XDG paths and reads them in-process, so
+  `sqlite` is no longer an optional dependency).
+- **Removed, upstream dropped the feature:** `fix_browse_files_linux` (the
+  file dialog is files-only on every platform now) and the Chrome extension
+  auto-install part of `fix_browser_tools_linux` (upstream no longer installs it
+  on any platform).
+- `enable_local_agent_mode` finds the feature registry in the right chunk again
+  (its minified name now repeats across chunks).
+- `claude-desktop --diagnose`: the GlobalShortcuts portal probe follows the
+  app's new check (a portal reporting version 0 counts as unavailable); the
+  `sqlite3` line is gone.
+- Flag template 387 -> 450 entries, Extra -> Deployment catalog 178 -> 176 keys
+  (new: `coworkEDRIntegration`, `coworkEDRIntegrationVendor`,
+  `deniedPluginMcpServers`, `claudeInChromePasswordManagersEnabled`,
+  `inferenceGatewayManagedClaudeCode`, `sharingEndpoint`; the `selfHosted*`
+  credential keys and `deviceToolsEnabled` are retired upstream).
+
 ## 2026-10-05
 
 ### Transparent window: live transparency slider

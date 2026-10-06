@@ -165,33 +165,35 @@ proc countMatches(content: string, pat: Regex): int =
   for _ in content.findIter(pat):
     inc result
 
-proc cuGateSetName(content: string): string =
-  ## The platform Set the Computer Use enable gate tests. Read from the gate
-  ## itself (`return!SET.has(process.platform)||HIPAA()?!1:X()&&
-  ## PREF("chicagoEnabled")}`), which keeps that shape with or without Patch 11's
-  ## prepended Linux branch. Upstream declares a second, identical
-  ## `new Set(["darwin","win32"])` right next to it for watch-record, so the
-  ## declaration order is never trusted. "" when the gate is not found exactly
-  ## once.
-  let gatePat =
-    re"""return!(?:[\w$]+\.)*([\w$]+)\.has\(process\.platform\)\|\|[\w$]+\(\)\?!1:[\w$]+\(\)&&[\w$]+(?:\.[\w$]+)*\(["`]chicagoEnabled["`]\)\}"""
+const CU_PLATFORM_FN_BODY =
+  # hasComputerUseExecutor (v2.19675.1+). Upstream added "linux" to its own CU
+  # platform Set but drops Wayland sessions whose portal lacks RemoteDesktop v2
+  # or Clipboard: `return SET.has(process.platform)&&!(isWayland()&&!portalOk())`.
+  """return ([\w$]+)\.has\(process\.platform\)&&!\([\w$]+\(\)&&![\w$]+\(\)\)\}"""
+
+proc cuPlatformSetName(content: string): string =
+  ## The Set hasComputerUseExecutor tests, read from the function itself (which
+  ## keeps its shape with or without Patch 2's prepended Linux branch). ""
+  ## unless the function is found exactly once AND its Set already lists
+  ## "linux" (the declaration Patch 2 relies on).
   var names: seq[string] = @[]
-  for m in content.findIter(gatePat):
+  let fnPat = re(
+    """function [\w$]+\(\)\{(?:if\(process\.platform==="linux"\)return!0;)?""" &
+      CU_PLATFORM_FN_BODY
+  )
+  for m in content.findIter(fnPat):
     names.add m.captures[0]
-  if names.len == 1:
-    return names[0]
-  return ""
-
-proc cuGateSetDecl(setName: string, linux: bool): Regex =
-  ## The declaration `SET=new Set(["darwin","win32"])`, or with our "linux".
-  let tail =
-    if linux:
+  if names.len != 1:
+    return ""
+  let decl = re(
+    "(?<![\\w$.])" & escapeRe(names[0]) &
       """=new Set\(\[(["`])darwin\1,\1win32\1,\1linux\1\]\)"""
-    else:
-      """=new Set\(\[(["`])darwin\1,\1win32\1\]\)"""
-  re("(?<![\\w$.])" & escapeRe(setName) & tail)
+  )
+  if countMatches(content, decl) != 1:
+    return ""
+  return names[0]
 
-proc endStateMarkers(setName: string): seq[EndStateMarker] =
+proc endStateMarkers(): seq[EndStateMarker] =
   ## One positive end-state pattern per sub-patch, with its exact count.
   proc lit(name, s: string, expected = 1): EndStateMarker =
     EndStateMarker(name: name, pat: re(escapeRe(s)), expected: expected)
@@ -204,8 +206,10 @@ proc endStateMarkers(setName: string): seq[EndStateMarker] =
       "1 executors at app ready",
       """app\.on\(["`]ready["`],\(?async\(\)=>\{if\(process\.platform==="linux"\)\{""",
     ),
-    EndStateMarker(
-      name: "2 CU gate Set", pat: cuGateSetDecl(setName, true), expected: 1
+    rx(
+      "2 CU platform gate",
+      "function [\\w$]+\\(\\)\\{if\\(process\\.platform===\"linux\"\\)return!0;" &
+        CU_PLATFORM_FN_BODY,
     ),
     rx(
       "4 createDarwinExecutor",
@@ -213,7 +217,7 @@ proc endStateMarkers(setName: string): seq[EndStateMarker] =
     ),
     rx(
       "4d platform executor factory",
-      """if\(process\.platform===["`]darwin["`]\)return [\w$]+(?:\.[\w$]+)*\([\w$]+\);if\(process\.platform==="linux"&&globalThis\.__linuxExecutor\)return globalThis\.__linuxExecutor;throw (?:new )?Error\(["`]computer-use executor not implemented""",
+      """if\(process\.platform===["`]darwin["`]\)return [\w$]+(?:\.[\w$]+)*\([\w$]+\);if\(process\.platform==="linux"&&globalThis\.__linuxExecutor\)return globalThis\.__linuxExecutor;(?:if\(process\.platform===["`]linux["`]\)return [^;]{1,80};)?throw (?:new )?Error\(["`]computer-use executor not implemented""",
     ),
     lit(
       "4b cu lock acquire",
@@ -268,15 +272,15 @@ proc endStateMarkers(setName: string): seq[EndStateMarker] =
     ),
     rx(
       "11 isEnabled gate",
-      """function [\w$]+\(\)\{if\(process\.platform==="linux"\)return(?: ?!0| globalThis\.__cdbCuHipaa=[\w$]+,![\w$]+\(\));return ?!?[\w$]+(?:\.[\w$]+)*\.has\(process\.platform\)(?:\|\|[\w$]+\(\))?\?(?:!1:)?[\w$]+\(\)&&[\w$]+(?:\.[\w$]+)*\(["'`]chicagoEnabled["'`]\)(?::!1)?\}""",
+      """function [\w$]+\((?:[\w$]+=\{\})?\)\{if\(process\.platform==="linux"\)return(?: ?!0| globalThis\.__cdbCuHipaa=[\w$]+,![\w$]+\(\));return ?!?(?:[\w$]+(?:\.[\w$]+)*\.has\(process\.platform\)|[\w$]+\(\))(?:\|\|[\w$]+\(\))?\?(?:!1:)?[\w$]+\([\w$]*\)&&[\w$]+(?:\.[\w$]+)*\(["'`]chicagoEnabled["'`]\)(?::!1)?\}""",
     ),
     rx(
       "12 isRegisterable gate",
-      """function [\w$]+\(\)\{if\(process\.platform==="linux"\)return (?:[\w$]+\(\)|!0);return [\w$]+(?:\.[\w$]+)*\(([\w$]+)\)\?(?:![\w$]+\(\)&&)?[\w$]+(?:\.[\w$]+)*\.has\(process\.platform\)""",
+      """function [\w$]+\((?:[\w$]+=\{\})?\)\{if\(process\.platform==="linux"\)return (?:[\w$]+\([\w$]*\)|!0);return [\w$]+(?:\.[\w$]+)*\(([\w$]+)\)\?(?:![\w$]+\(\)&&)?(?:[\w$]+(?:\.[\w$]+)*\.has\(process\.platform\)|[\w$]+\(\)&&[\w$]+\([\w$]+\))""",
     ),
-    lit(
+    rx(
       "13a allowlist gate",
-      "=process.platform===\"linux\"?\"\":\"The frontmost application must be in the session allowlist",
+      """(?:=|:\()process\.platform==="linux"\?"":"The frontmost application must be in the session allowlist""",
     ),
     lit(
       "13b request_access prefix",
@@ -352,13 +356,13 @@ proc apply*(input: string): string =
   var changes = 0
   const EXPECTED_PATCHES = 35
 
-  let gateSet = cuGateSetName(content)
+  let gateSet = cuPlatformSetName(content)
   if gateSet == "":
     raise newException(
       ValueError,
-      "  [FAIL] CU enable gate (`return!SET.has(process.platform)||...chicagoEnabled`) not found exactly once - re-audit",
+      "  [FAIL] CU platform gate (`return SET.has(process.platform)&&!(wayland()&&!portal())`, SET with linux) not found exactly once - re-audit",
     )
-  let markers = endStateMarkers(gateSet)
+  let markers = endStateMarkers()
   var present: seq[string] = @[]
   var absent: seq[string] = @[]
   for mk in markers:
@@ -408,27 +412,26 @@ proc apply*(input: string): string =
       echo "  [FAIL] app.on(\"ready\") pattern: 0 matches"
       raise newException(ValueError, "  [FAIL] app.on(\"ready\") pattern: 0 matches")
 
-  # ── Patch 2: add "linux" to the CU gate's platform Set ─────────────────
+  # ── Patch 2: CU platform gate → true on Linux ──────────────────────────
   block:
-    # Anchored on the Set the CU enable gate actually tests (cuGateSetName),
-    # NOT on declaration order: upstream declares an identical
-    # `new Set(["darwin","win32"])` for watch-record right after it.
-    # Quote-agnostic: re-emit the quote character upstream actually used.
-    let pat = cuGateSetDecl(gateSet, false)
-    let n = countMatches(content, pat)
-    if n != 1:
-      raise newException(
-        ValueError, &"  [FAIL] CU gate Set {gateSet}: {n} declarations, expected 1"
-      )
-    discard replaceFirst(
+    # v2.19675.1 ships native Linux CU and put "linux" in its own platform Set,
+    # but hasComputerUseExecutor() still returns false on a Wayland session whose
+    # portal lacks RemoteDesktop v2 or Clipboard (wlroots, GNOME < 46, older
+    # Plasma). Every CU consumer (host adapter, isEnabled, opt-out, status) goes
+    # through it, and our bridges cover those sessions, so Linux is always a CU
+    # platform - the same end state the old "add linux to the Set" patch had.
+    let pat = re("(function [\\w$]+\\(\\)\\{)(" & CU_PLATFORM_FN_BODY & ")")
+    let n = replaceFirst(
       content,
       pat,
       proc(m: RegexMatch): string =
-        let quote = m.captures[0]
-        gateSet & "=new Set([" & quote & "darwin" & quote & "," & quote & "win32" & quote &
-          "," & quote & "linux" & quote & "])",
+        m.captures[0] & "if(process.platform===\"linux\")return!0;" & m.captures[1],
     )
-    echo &"  [OK] CU gate Set {gateSet}: added linux (1 match)"
+    if n != 1:
+      raise newException(
+        ValueError, &"  [FAIL] CU platform gate ({gateSet}): {n} matches, expected 1"
+      )
+    echo &"  [OK] CU platform gate ({gateSet}): Linux always supported (1 match)"
     inc changes
     inc patchesApplied
 
@@ -473,11 +476,15 @@ proc apply*(input: string): string =
     # one `darwin)return X(Y);throw "...executor not implemented"` site). Insert
     # the linux branch between the darwin branch and the throw. Param/fn vars
     # are minified - keep them as captured wildcards.
+    # v2.19675.1 added upstream's own linux arm between the two
+    # (`if(linux)return init(),isWayland()?portalExec(t):x11Exec(t);`). Ours
+    # goes in front of it, so our bridges keep driving Linux CU and upstream's
+    # native executor stays the fallback when no bridge executor was installed.
     # NB: the throw interpolates `${process.platform}` - the placeholder body
     # contains a `.`, so it is `[\w$.]+` (NOT `[\w$]+`, which stops at the dot
     # and never reaches the closing `}` - a silent 0-match trap).
     let pat =
-      re"""(if\(process\.platform===["`]darwin["`]\)return [\w$]+(?:\.[\w$]+)*\([\w$]+\);)(throw (?:new )?Error\(`computer-use executor not implemented for \$\{[\w$.]+\}`\))"""
+      re"""(if\(process\.platform===["`]darwin["`]\)return [\w$]+(?:\.[\w$]+)*\([\w$]+\);)((?:if\(process\.platform===["`]linux["`]\)return [^;]{1,80};)?throw (?:new )?Error\(`computer-use executor not implemented for \$\{[\w$.]+\}`\))"""
     let n = replaceFirst(
       content,
       pat,
@@ -669,8 +676,9 @@ proc apply*(input: string): string =
     # `(state, toolName, input, session)`. The dispatcher moved onto that state
     # and is memoized there: `let o=e.dispatch??=xn(i,e.altToolModeCalls)`.
     # v2.9939.0 added `&&!e.cliInSandboxVm` to the ccd branch of isEnabled.
+    # v2.19675.1 passes `{requireFreshGrowthBook:!1}` to both arms.
     let htcStart =
-      re"""(([\w$]+)=\{[^{}]{0,80}isEnabled:[\w$]+=>(?:[\w$]+\.sessionType===["`]ccd["`]\?[\w$]+(?:\.[\w$]+)?\(\)(?:&&![\w$]+\.[\w$]+)?:[\w$]+(?:\.[\w$]+)?\(\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
+      re"""(([\w$]+)=\{[^{}]{0,80}isEnabled:[\w$]+=>(?:[\w$]+\.sessionType===["`]ccd["`]\?[\w$]+(?:\.[\w$]+)?\((?:\{[\w$]+:![01]\})?\)(?:&&![\w$]+\.[\w$]+)?:[\w$]+(?:\.[\w$]+)?\((?:\{[\w$]+:![01]\})?\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
     let maybeHtc = content.find(htcStart)
     if maybeHtc.isNone:
       echo "  [FAIL] handleToolCall pattern: 0 matches"
@@ -970,6 +978,13 @@ proc apply*(input: string): string =
     # before any tool call, so the global is always set when the handler runs.
     # The v26832 fallback has no HIPAA function to capture and leaves the global
     # unset; the handler then skips the check (typeof guard).
+    # v2.19675.1: the gates take an options arg (`e={}`, requireFreshGrowthBook)
+    # and the platform Set became a call to hasComputerUseExecutor() (Patch 2):
+    #   function aV(e={}){return!$B()||cb()?!1:iV(e)&&nb("chicagoEnabled")}
+    # iV() now also requires the Linux rollout flag 3676943315; the Linux
+    # branch bypasses it like it bypasses the rest of the rollout gate.
+    let patV19675 =
+      re"""(function [\w$]+\(([\w$]+)=\{\}\)\{)return![\w$]+(?:\.[\w$]+)*\(\)\|\|([\w$]+)\(\)\?!1:[\w$]+\(\2\)&&[\w$]+(?:\.[\w$]+)*\(["'`]chicagoEnabled["'`]\)\}"""
     let patV46388 =
       re"""(function [\w$]+\(\)\{)return![\w$]+(?:\.[\w$]+)*\.has\(process\.platform\)\|\|([\w$]+)\(\)\?!1:[\w$]+\(\)&&[\w$]+(?:\.[\w$]+)*\(["'`]chicagoEnabled["'`]\)\}"""
     let patV26832 =
@@ -983,15 +998,28 @@ proc apply*(input: string): string =
       re"""(function [\w$]+\(\)\{)return [\w$]+\([\w$]+\)\?[\w$]+\.has\(process\.platform\)&&[\w$]+\(\):[\w$]+\(\)\}"""
     var n = replaceFirst(
       content,
-      patV46388,
+      patV19675,
       proc(m: RegexMatch): string =
         let bounds = m.matchBounds
         let whole = content[bounds.a .. bounds.b]
         let headerLen = m.captures[0].len
-        let hipaaName = m.captures[1]
+        let hipaaName = m.captures[2]
         m.captures[0] & "if(process.platform===\"linux\")return globalThis.__cdbCuHipaa=" &
           hipaaName & ",!" & hipaaName & "();" & whole[headerLen ..^ 1],
     )
+    if n == 0:
+      n = replaceFirst(
+        content,
+        patV46388,
+        proc(m: RegexMatch): string =
+          let bounds = m.matchBounds
+          let whole = content[bounds.a .. bounds.b]
+          let headerLen = m.captures[0].len
+          let hipaaName = m.captures[1]
+          m.captures[0] &
+            "if(process.platform===\"linux\")return globalThis.__cdbCuHipaa=" & hipaaName &
+            ",!" & hipaaName & "();" & whole[headerLen ..^ 1],
+      )
     if n == 0:
       n = replaceFirst(
         content,
@@ -1068,6 +1096,12 @@ proc apply*(input: string): string =
     #   function Nhn(){return wS(_hn)?!Uk()&&ZR.has(process.platform)&&nz():rz()}
     # The `!<hipaa>()&&` is optional in the pattern; the Linux branch still
     # delegates to the Patch-11 gate, which now honours the same HIPAA gate.
+    # v2.19675.1 threads the options arg through and calls
+    # hasComputerUseExecutor() instead of testing the Set:
+    #   function f4n(e={}){return jb(J2n)?!cb()&&$B()&&iV(e):aV(e)}
+    # Delegate to the Patch-11 gate with the same arg.
+    let patV19675 =
+      re"""(function [\w$]+\(([\w$]+)=\{\}\)\{)return [\w$]+(?:\.[\w$]+)*\([\w$]+\)\?(?:![\w$]+\(\)&&)?[\w$]+\(\)&&[\w$]+\(\2\):([\w$]+)\(\2\)\}"""
     let patV26832 =
       re"""(function [\w$]+\(\)\{)return [\w$]+(?:\.[\w$]+)*\(([\w$]+)\)\?(?:![\w$]+\(\)&&)?[\w$]+(?:\.[\w$]+)*\.has\(process\.platform\)&&[\w$]+\(\):([\w$]+)\(\)\}"""
     let patBue =
@@ -1077,15 +1111,28 @@ proc apply*(input: string): string =
       re"""(function [\w$]+\(\)\{)return [\w$]+\.has\(process\.platform\)\?[\w$]+\(\)&&([\w$]+)\("chicagoEnabled"\):!1\}"""
     var n = replaceFirst(
       content,
-      patV26832,
+      patV19675,
       proc(m: RegexMatch): string =
         let bounds = m.matchBounds
         let whole = content[bounds.a .. bounds.b]
         let headerLen = m.captures[0].len
+        let arg = m.captures[1]
         let wsName = m.captures[2]
-        m.captures[0] & "if(process.platform===\"linux\")return " & wsName & "();" &
-          whole[headerLen ..^ 1],
+        m.captures[0] & "if(process.platform===\"linux\")return " & wsName & "(" & arg &
+          ");" & whole[headerLen ..^ 1],
     )
+    if n == 0:
+      n = replaceFirst(
+        content,
+        patV26832,
+        proc(m: RegexMatch): string =
+          let bounds = m.matchBounds
+          let whole = content[bounds.a .. bounds.b]
+          let headerLen = m.captures[0].len
+          let wsName = m.captures[2]
+          m.captures[0] & "if(process.platform===\"linux\")return " & wsName & "();" &
+            whole[headerLen ..^ 1],
+      )
     if n == 0:
       n = replaceFirst(
         content,
@@ -1124,13 +1171,25 @@ proc apply*(input: string): string =
   block:
     let pat =
       re"""([\w$]+)=["`]The frontmost application must be in the session allowlist at the time of this call, or this tool returns an error and does nothing\.["`]"""
-    let n = replaceFirst(
+    var n = replaceFirst(
       content,
       pat,
       proc(m: RegexMatch): string =
         let v = m.captures[0]
         &"{v}=process.platform===\"linux\"?\"\":\"The frontmost application must be in the session allowlist at the time of this call, or this tool returns an error and does nothing.\"",
     )
+    # v2.19675.1: the sentence is the else-arm of a hitTest ternary
+    # (`i=t.hitTest==="none"?"<shared-screen text>":"The frontmost ..."`), no
+    # longer its own assignment. Wrap that arm instead.
+    if n == 0:
+      let patV19675 =
+        re"""([\w$]+\.hitTest==="none"\?"[^"]*":)("The frontmost application must be in the session allowlist at the time of this call, or this tool returns an error and does nothing\.")"""
+      n = replaceFirst(
+        content,
+        patV19675,
+        proc(m: RegexMatch): string =
+          m.captures[0] & "(process.platform===\"linux\"?\"\":" & m.captures[1] & ")",
+      )
     if n >= 1:
       echo "  [OK] 13a Lf allowlist gate: empty on Linux"
       inc descChanges
@@ -1417,7 +1476,23 @@ proc apply*(input: string): string =
       "\"Take a screenshot of the primary display. On this platform, " &
       "screenshots are NOT filtered \\u2014 all open windows are visible. " &
       "Input actions targeting apps not in the session allowlist are rejected.\")"
-    if replaceLiteralFirstAny(content, old13f, new13f) == 1:
+    # v2.19675.1 split the allowlist sentence off into a hitTest-keyed suffix:
+    #   "...NOT filtered \u2014 all open windows are visible."+(t.hitTest==="none"
+    #   ?" That includes this assistant's own window; ...":" Input actions ...")
+    # Wrap the whole concatenation so Linux gets neither suffix.
+    let pat13f =
+      re"""("Take a screenshot of the primary display\. On this platform, screenshots are NOT filtered \\u2014 all open windows are visible\."\+\([\w$]+\.hitTest==="none"\?"[^"]*":"[^"]*"\))"""
+    var n13f = replaceFirst(
+      content,
+      pat13f,
+      proc(m: RegexMatch): string =
+        "(process.platform===\"linux\"?" &
+          "\"Take a screenshot of the primary display. All open windows are visible.\":" &
+          m.captures[0] & ")",
+    )
+    if n13f == 0:
+      n13f = replaceLiteralFirstAny(content, old13f, new13f)
+    if n13f == 1:
       echo "  [OK] 13f screenshot: clean description on Linux"
       inc descChanges
       inc patchesApplied

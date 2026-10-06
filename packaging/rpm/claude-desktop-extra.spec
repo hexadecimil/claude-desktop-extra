@@ -46,6 +46,9 @@ Requires:       libdrm
 Requires:       mesa-libgbm
 Requires:       alsa-lib
 Requires:       libnotify
+# claude-native-binding.node links libpipewire-0.3.so.0 (DT_NEEDED since 2.19675.1);
+# the bundled tree is excluded from auto-requires above, so it must be explicit.
+Requires:       pipewire-libs
 # libsecret is dlopened by Chromium's os_crypt for keyring credential storage —
 # rpm's automatic soname scan does NOT catch dlopen, so it must be explicit.
 # xdg-utils (xdg-open) and xdg-desktop-portal mirror the official .deb's Depends.
@@ -77,10 +80,6 @@ Recommends:     edk2-ovmf
 Recommends:     edk2-aarch64
 %endif
 Recommends:     virtiofsd
-# Project detection (detectedProjects source) — without it, periodic ENOENT
-# errors spam ~/.config/Claude/logs/main.log and detected-projects features
-# don't surface. Soft dep so the app still installs without it.
-Recommends:     sqlite
 # Computer Use is fully first-party now: bundled x11-bridge (X11/XWayland),
 # wlroots-bridge (Sway/Hyprland/Niri), gnome-portal-bridge (GNOME Wayland) and
 # kwin-portal-bridge (KDE Plasma 6.6+). Remaining Suggests cover only the

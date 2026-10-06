@@ -8,17 +8,17 @@
 # How it works:
 #   - The main window is constructed by the unsuffixed-named function
 #     `function NAME(arg){return WIN=new ELECTRON.BrowserWindow(arg),...}`.
-#     The original passes no `title:` option, so the initial title is
-#     `app.getName()`; once React loads, Chromium emits page-title-updated
-#     and Electron applies whatever document.title says.
-#   - Unlike popup windows (which go through a `qkn`-style helper that calls
-#     event.preventDefault() to lock the title), the main window has no such
-#     handler — the renderer's title flows through verbatim.
+#   - Since v2.19675.1 upstream drives the main-window title itself: it
+#     preventDefaults the window's page-title-updated and calls
+#     win.setTitle(composed) on did-navigate, on a debounced claude.ai
+#     page-title-updated, and when GrowthBook flag 3052534774 flips.
 #   - We inject a tiny comma-expression right after the BrowserWindow
-#     construction that, when CLAUDE_PROFILE is set, (a) calls setTitle()
-#     with "Claude (PROFILE)" for the brief pre-React window, and (b) hooks
-#     page-title-updated to preventDefault and re-set with the suffix
-#     appended. Conversation names like "My chat" become "My chat (work)".
+#     construction that, when CLAUDE_PROFILE is set, wraps THIS window's
+#     setTitle so every title (ours or upstream's) ends with " (PROFILE)"
+#     exactly once and re-applies the current title. Electron's native
+#     page-title-updated path bypasses JS setTitle, so the patch also
+#     asserts upstream's sync (preventDefault + setTitle) is still there.
+#     "Claude" -> "Claude (work)", "My chat - Claude" -> "My chat - Claude (work)".
 #
 # Default profile (CLAUDE_PROFILE unset) → no listener attached, no behavior
 # change.
@@ -39,6 +39,22 @@ proc apply*(input: string): string =
     echo "  [PASS] No changes needed (already patched)"
     return
 
+  # Precondition: upstream's main-window title sync owns the title
+  # (`win.on("page-title-updated",e=>{e.preventDefault()})` + a
+  # `win.setTitle(...)` driver). Without it Electron applies page titles
+  # natively, bypassing our setTitle wrapper, and the suffix would be lost.
+  let syncPattern =
+    re"""function [\w$]+\(([\w$]+),[\w$]+\)\{let [\w$]+,[\w$]+,[\w$]+=\(\)=>\{if\(\1\.isDestroyed\(\)\)return;let [\w$]+=[\w$]+\([^;]*;[^}]*\1\.setTitle\([\w$]+\)\)\}[^;]*;?[^\n]{0,200}?\1\.on\(["`]page-title-updated["`],\(?([\w$]+)\)?=>\{?\2\.preventDefault\(\)"""
+  var syncHits = 0
+  for _ in result.findIter(syncPattern):
+    inc syncHits
+  if syncHits != 1:
+    echo &"  [FAIL] upstream main-window title sync: {syncHits} matches, expected 1"
+    raise newException(
+      ValueError, "fix_profile_window_title: title sync not found - re-audit"
+    )
+  echo "  [OK] upstream main-window title sync present (1 match)"
+
   # function NAME(ARG){return WIN=new ELECTRON.BrowserWindow(ARG),
   # WIN may be a dotted property path since v1.19367.0 (`exports.mainWindow`).
   let pattern =
@@ -58,10 +74,19 @@ proc apply*(input: string): string =
         # Profile-aware title injection. Wrapped in a single short-circuit
         # expression so the comma chain still type-checks; evaluates to
         # `false` (no-op) when CLAUDE_PROFILE is unset.
-        "process.env.CLAUDE_PROFILE&&((globalThis." & SENTINEL & "=true)," & winVar &
-        ".setTitle(\"Claude (\"+process.env.CLAUDE_PROFILE+\")\")," & winVar &
-        ".on(\"page-title-updated\",(__cdb_ev,__cdb_t)=>{__cdb_ev.preventDefault();" &
-        winVar & ".setTitle(__cdb_t+\" (\"+process.env.CLAUDE_PROFILE+\")\")})),",
+        #
+        # Since v2.19675.1 upstream owns the main-window title (it
+        # preventDefaults page-title-updated and calls win.setTitle() from
+        # did-navigate / a debounced page-title-updated / a GrowthBook
+        # listener). A one-shot setTitle would be overwritten, so we wrap
+        # THIS window's setTitle: every title, ours or upstream's, gets the
+        # suffix exactly once. Other windows keep their own setTitle.
+        "process.env.CLAUDE_PROFILE&&((globalThis." & SENTINEL &
+        "=true),((__cdb_w,__cdb_s)=>{" & "const __cdb_o=__cdb_w.setTitle.bind(__cdb_w);" &
+        "__cdb_w.setTitle=(__cdb_t)=>{__cdb_t=String(__cdb_t??\"\");" &
+        "return __cdb_o(__cdb_t.endsWith(__cdb_s)?__cdb_t:__cdb_t+__cdb_s)};" &
+        "__cdb_w.setTitle(__cdb_w.getTitle())})(" & winVar &
+        ",\" (\"+process.env.CLAUDE_PROFILE+\")\")),",
   )
 
   if hits == 1:

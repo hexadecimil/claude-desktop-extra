@@ -3,23 +3,20 @@
 //
 // WHY THIS EXISTS
 // ---------------
-// Upstream hardcodes four host tools:
+// Upstream hardcodes three host tools:
 //
 //   /usr/bin/busctl         GlobalShortcuts portal probe. If it cannot run, the
 //                           app decides there is no portal and refuses every
 //                           Wayland global shortcut (Quick Entry included).
 //   /usr/bin/secret-tool    Chrome cookie import (libsecret)
 //   /usr/bin/kwallet-query  Chrome cookie import (KWallet)
-//   /usr/bin/sqlite3        Recent Projects (enabled on Linux by our own
-//                           fix_detected_projects_linux)
 //
 // None of them exist at /usr/bin on NixOS. patches/linux/fix_host_tool_paths_linux
-// (first three) and patches/linux/fix_detected_projects_linux (sqlite3) rewrite
-// each literal to
+// rewrites each literal to
 //
 //   (require("fs").existsSync("/usr/bin/X")?"/usr/bin/X":"X")
 //
-// This harness runs both compiled patches over upstream's own call-site shapes
+// This harness runs the compiled patch over upstream's own call-site shapes
 // (copied from 2.7032.0), then evaluates the patched code with a fake `fs`:
 // file present -> upstream's literal path is kept (Debian/Fedora/Arch behavior
 // unchanged); file absent -> the bare name, which execFile resolves via PATH
@@ -45,14 +42,12 @@ import vm from "node:vm";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOST_BIN = join(ROOT, "patches", "linux", "fix_host_tool_paths_linux");
-const DP_BIN = join(ROOT, "patches", "linux", "fix_detected_projects_linux");
 const SKIP_EXIT = 3;
 
 const TOOLS = [
   { path: "/usr/bin/busctl", name: "busctl", bin: HOST_BIN },
   { path: "/usr/bin/secret-tool", name: "secret-tool", bin: HOST_BIN },
   { path: "/usr/bin/kwallet-query", name: "kwallet-query", bin: HOST_BIN },
-  { path: "/usr/bin/sqlite3", name: "sqlite3", bin: DP_BIN },
 ];
 
 // ---------------------------------------------------------------- reporting
@@ -85,17 +80,13 @@ function fallbackExpr(path, name) {
 
 // ---------------------------------------------------------------- fixture
 // Upstream's call sites, verbatim shapes from 2.7032.0 (index.chunk-CxyX_nIQ.js,
-// index.chunk-B8YyF2lT.js, index.chunk-D_rPGfDo.js). The patches capture
+// index.chunk-B8YyF2lT.js). The patches capture
 // identifiers by wildcard; what matters is the shape around each literal.
 // `__fixture*` wrappers only expose the values to the harness.
 const FIXTURE = `"use strict";
 var kk=()=>globalThis.process?.env??{};async function N9t(e){let{stdout:t}=await wf("/usr/bin/busctl",["--user","--timeout=2",...e],{timeout:3e3,hardTimeoutMs:5e3});return t}
 var M="/usr/bin/secret-tool",ae="/usr/bin/kwallet-query",N={chrome:{app:"chrome",name:"Chrome"},chromium:{app:"chromium",name:"Chromium"}};
-async function O(){if(process.platform!=="darwin")return t.pK.debug(\`[detectedProjects] skipping on \${process.platform} (macOS only)\`),[];return["ran"]}
-async function y(e,a,o){t.pK.debug(\`[detectedProjects]   reading \${o}\`);let{stdout:s}=await t.rU("/usr/bin/sqlite3",["-readonly",e,a],{timeout:5e3});return s}
-async function v(e,i){t.pK.debug(\`[detectedProjects] scanning \${i} (\${e})...\`);let o=await _(n.default.join((0,r.homedir)(),"Library","Application Support",e,"User","globalStorage","state.vscdb"),"SELECT");return o}
-async function z(){t.pK.debug("[detectedProjects] scanning zed...");let e=await _(n.default.join((0,r.homedir)(),"Library","Application Support","Zed","db","0-stable","db.sqlite"),\`SELECT paths FROM workspaces\`);return e}
-globalThis.__fixture={N9t,O,y,v,z,cookieTools:()=>[M,ae]};
+globalThis.__fixture={N9t,cookieTools:()=>[M,ae]};
 `;
 
 // ---------------------------------------------------------------- patch runs
@@ -131,35 +122,20 @@ async function evaluate(src, present) {
       execd.push(bin);
       return { stdout: "" };
     },
-    t: {
-      pK: { debug() {} },
-      rU: async (bin) => {
-        execd.push(bin);
-        return { stdout: "" };
-      },
-    },
-    _: async (p) => p,
-    n: { default: { join: (...s) => s.join("/") } },
-    r: { homedir: () => "/home/u" },
   };
   vm.runInNewContext(src, vm.createContext(sandbox));
   const f = sandbox.__fixture;
   const [secretTool, kwalletQuery] = f.cookieTools();
   await f.N9t(["status"]);
-  await f.y("db", "SELECT 1", "vscode");
   return {
     busctl: execd[0],
     "secret-tool": secretTool,
     "kwallet-query": kwalletQuery,
-    sqlite3: execd[1],
-    guard: await f.O(),
-    vscode: await f.v("Code", "VS Code"),
-    zed: await f.z(),
     probed,
   };
 }
 
-for (const bin of [HOST_BIN, DP_BIN]) {
+for (const bin of [HOST_BIN]) {
   try {
     accessSync(bin, constants.X_OK);
   } catch {
@@ -175,19 +151,15 @@ const scratch = mkdtempSync(join(tmpdir(), "cdb-host-tool-paths-"));
 
 try {
   // ---------------------------------------------------------------- [0] apply
-  section("[0] both patches apply to upstream's shapes, in orchestrator order");
+  section("[0] the patch applies to upstream's shapes");
   const file = join(scratch, "index.js");
   writeFileSync(file, FIXTURE);
-  // Basename order: fix_detected_projects_linux < fix_host_tool_paths_linux.
-  const dp = runBin(DP_BIN, file);
-  check("fix_detected_projects_linux exits 0", dp.status, 0);
-  check("fix_detected_projects_linux reports no failure", /\[FAIL\]/.test(dp.out), false);
   const host = runBin(HOST_BIN, file);
   check("fix_host_tool_paths_linux exits 0", host.status, 0);
   check("fix_host_tool_paths_linux reports no failure", /\[FAIL\]/.test(host.out), false);
   check(
     "a first run never says 'already' (the probe would read PARTIAL)",
-    /already/i.test(dp.out + host.out),
+    /already/i.test(host.out),
     false
   );
   const patched = readFileSync(file, "utf8");
@@ -221,19 +193,6 @@ try {
   check("mixed: busctl keeps /usr/bin", mixed.busctl, "/usr/bin/busctl");
   check("mixed: secret-tool falls back", mixed["secret-tool"], "secret-tool");
 
-  // fix_detected_projects_linux's other sub-patches still do their job.
-  check("detected projects: Linux passes the platform guard", withNone.guard[0], "ran");
-  check(
-    "detected projects: VS Code DB under ~/.config",
-    withNone.vscode,
-    "/home/u/.config/Code/User/globalStorage/state.vscdb"
-  );
-  check(
-    "detected projects: Zed DB under ~/.local/share",
-    withNone.zed,
-    "/home/u/.local/share/zed/db/0-stable/db.sqlite"
-  );
-
   // ---------------------------------------------------------------- [3] PATH
   section("[3] the bare name really resolves through PATH (execFile lookup)");
   const fakeBin = join(scratch, "bin");
@@ -249,7 +208,7 @@ try {
 
   // ---------------------------------------------------------------- [4] idempotent
   section("[4] a second run is a no-op with a positive 'already'");
-  for (const bin of [DP_BIN, HOST_BIN]) {
+  for (const bin of [HOST_BIN]) {
     const again = join(scratch, "again.js");
     writeFileSync(again, patched);
     const r = runBin(bin, again);

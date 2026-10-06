@@ -340,4 +340,3 @@ python3 -c 'import json; json.load(open("/etc/claude-desktop/managed-settings.js
 
   Plain `claude-desktop` in 1P mode uses `~/.config/Claude/` again. Re-adding `managed-settings.json` (or `--3p`, if a stored provider config exists) switches back to 3P. (`deploymentMode` and the config sources are upstream Anthropic mechanisms; `--1p`/`--3p` are launcher conveniences added by this package.)
 - **`global` region requires Vertex's global endpoint to be enabled** for your project - newer projects have this on by default; older ones may need to be enabled in the Cloud Console under Vertex AI Studio settings.
-- **`sqlite3` is needed for project detection.** Unrelated to 3P, but if you hit `[detectedProjects] spawn /usr/bin/sqlite3 ENOENT` in the logs, `apt install sqlite3` clears it.

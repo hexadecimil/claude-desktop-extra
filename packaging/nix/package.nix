@@ -4,6 +4,7 @@
 , fetchurl
 , electron
 , libsecret          # dlopened by Chromium's os_crypt for keyring credential storage
+, pipewire           # DT_NEEDED of @ant/claude-native's binding (RPATH in postFixup)
 , patchelf           # RPATH tripwire below
 , makeWrapper
 , makeDesktopItem
@@ -26,11 +27,9 @@
 , glib ? null              # gsettings (flat mouse acceleration)
 # Host tools the app and launcher exec by name. Suffixed onto PATH, so a
 # user's own copy wins: python3 (--install-gnome-hotkey, --1p/--3p),
-# xdg-utils (xdg-open for links and the CU executor), sqlite (sqlite3 for
-# Recent Projects detection).
+# xdg-utils (xdg-open for links and the CU executor).
 , python3
 , xdg-utils
-, sqlite
 # GNOME Shell search provider: its D-Bus service runs searchProvider.js under
 # gjs. Set to null to skip installing the provider.
 , gjs ? null
@@ -152,6 +151,22 @@ stdenvNoCC.mkDerivation {
     fi
     echo "node-pty libstdc++ RPATH: OK ($patched binding(s))"
 
+    # @ant/claude-native links libpipewire-0.3.so.0 (DT_NEEDED). The app refuses
+    # safe-fs containment when this binding fails to load, so give it an RPATH
+    # the same way as pty.node above.
+    native=0
+    for node in $out/lib/claude-desktop/resources/app.asar.unpacked/node_modules/@ant/claude-native/claude-native-binding.node; do
+      [ -f "$node" ] || continue
+      chmod u+w "$node"
+      patchelf --add-rpath ${lib.makeLibraryPath [ pipewire ]} "$node"
+      native=$((native + 1))
+    done
+    if [ "$native" -eq 0 ]; then
+      echo "ERROR: no claude-native binding under app.asar.unpacked; the .deb layout moved." >&2
+      exit 1
+    fi
+    echo "claude-native libpipewire RPATH: OK ($native binding(s))"
+
     if ! patchelf --print-rpath $out/lib/claude-desktop/claude | grep -q libsecret; then
       echo "ERROR: libsecret is not in the claude binary's RPATH." >&2
       echo "nixpkgs' electron no longer ships Chromium's dlopen-only libraries there;" >&2
@@ -259,7 +274,7 @@ stdenvNoCC.mkDerivation {
       ${lib.optionalString (glib != null) "--prefix PATH : ${glib}/bin"} \
       ${lib.optionalString (nodejs != null) "--prefix PATH : ${nodejs}/bin"} \
       ${lib.optionalString (qemu != null) "--prefix PATH : ${qemu}/bin"} \
-      --suffix PATH : ${lib.makeBinPath [ python3 xdg-utils sqlite ]} \
+      --suffix PATH : ${lib.makeBinPath [ python3 xdg-utils ]} \
       ${lib.optionalString (virtiofsd != null) "--set-default CLAUDE_VIRTIOFSD_PATH ${virtiofsd}/bin/virtiofsd"} \
       ${lib.optionalString (OVMF != null) "--set-default CLAUDE_OVMF_CODE_PATH ${OVMF.fd}/FV/${if stdenvNoCC.hostPlatform.isAarch64 then "AAVMF_CODE.fd" else "OVMF_CODE.fd"}"} \
       ${lib.optionalString (claude-code != null && extraSessionPaths == []) "--prefix PATH : ${claude-code}/bin"} \

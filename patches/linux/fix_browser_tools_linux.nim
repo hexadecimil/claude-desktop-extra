@@ -27,21 +27,22 @@
 # redirect it to ~/.claude/chrome/chrome-native-host (the Claude Code CLI's
 # host); that only pointed the manifest away from the binary upstream ships.
 #
-# What's left for us — 3 sub-patches:
+# What's left for us - 2 sub-patches:
 #   BC EXTEND the native browser list: xSA() ships ONLY Chrome+Edge. We add
 #      Chromium, Brave, Vivaldi and Opera. Because BOTH the NativeMessagingHosts
 #      install loop (via Y_i→xSA) AND profile discovery (x_i→xSA) derive from
 #      xSA(), extending this ONE function covers what the old separate Patch B
 #      (manifest write loop) and Patch C (user-data dirs) did — and reuses
 #      upstream's own manifest writer instead of duplicating it.
-#   D  Extension AUTO-INSTALL: still mac-gated (`Only macOS is supported.`). Inject
-#      the Linux External-Extensions path.
 #   E  DevTools opener: still darwin/win32 only. Add an xdg-open Linux handler.
+#
+# Extension auto-install is not patched: upstream returns "No per-user Chrome
+# extension install mechanism on this platform" on every OS, macOS included.
 
 import std/[os, strformat, strutils]
 import regex
 
-const EXPECTED_PATCHES = 3
+const EXPECTED_PATCHES = 2
 
 proc replaceFirst(
     content: var string, pattern: Regex2, subFn: proc(m: RegexMatch2, s: string): string
@@ -113,51 +114,6 @@ proc apply*(input: string): string =
     else:
       echo "  [FAIL] Browser list (xSA): native Chrome+Edge enumerator not found"
       echo "         Debug: rg -o 'name:\"Chrome\",path:[\\w$]+.join([\\w$]+,\"google-chrome\")' index.js"
-
-  # ── Patch D: Chrome extension auto-install (still mac-gated) ───────────────
-  let alreadyD =
-    re2"""process\.platform!=="darwin"&&process\.platform!=="linux"\)return\{status:"""
-  var amD: RegexMatch2
-  if result.find(alreadyD, amD):
-    echo "  [OK] Chrome extension install: already patched (skipped)"
-    patchesApplied += 1
-  else:
-    # The status enum is reached through a dotted namespace since v1.26832.0
-    # (`D.i.Error`), so capture the whole prefix before `.Error`.
-    let patternD =
-      re2"""(if\(process\.platform!==["`]darwin["`]\)return\{status:)((?:[\w$]+\.)*[\w$]+)(\.Error,error:["`]Unsupported platform: \$\{process\.platform\}\. Only macOS is supported\.["`]\})"""
-    let sitesD = result.findAll(patternD).len
-    if sitesD != 1:
-      echo "  [FAIL] Chrome extension install: " & $sitesD & " sites, expected 1"
-      quit(1)
-    var countD = result.replaceFirst(
-      patternD,
-      proc(m: RegexMatch2, s: string): string =
-        let enumVar = s[m.group(1)]
-        "if(process.platform!==\"darwin\"&&process.platform!==\"linux\")return{status:" &
-          enumVar &
-          ".Error,error:`Unsupported platform: ${process.platform}. Only macOS and Linux are supported.`};" &
-          "if(process.platform===\"linux\"){" &
-          "try{const _h=require(\"os\").homedir(),_p=require(\"path\")," &
-          "_id=\"fcoeoabgfenejglbffodgkkbkcdhcgfn\"," &
-          "_url=\"https://clients2.google.com/service/update2/crx\"," &
-          "_dirs=[_p.join(_h,\".config\",\"google-chrome\"),_p.join(_h,\".config\",\"chromium\")];" &
-          "let _ok=!1;for(const _d of _dirs){try{const _e=_p.join(_d,\"External Extensions\");" &
-          "require(\"fs\").mkdirSync(_e,{recursive:!0});" &
-          "require(\"fs\").writeFileSync(_p.join(_e,_id+\".json\")," &
-          "JSON.stringify({external_update_url:_url},null,2),\"utf-8\");" &
-          "(globalThis.__cdbDiag||console.log)(\"[Chrome Extension Install] Wrote to \"+_e);_ok=!0}catch(_x){}}" &
-          "return _ok?{status:" & enumVar & ".Succeeded}:{status:" & enumVar &
-          ".Error,error:\"No Chrome/Chromium config dirs found on Linux\"}}" &
-          "catch(e){return{status:" & enumVar &
-          ".Error,error:e instanceof Error?e.message:\"Unknown error\"}}}",
-    )
-    if countD == 1:
-      echo &"  [OK] Chrome extension install: added Linux support ({countD} match)"
-      patchesApplied += 1
-    else:
-      echo "  [FAIL] Chrome extension install: pattern not found"
-      echo "         Debug: rg -o 'Only macOS is supported.{{0,20}}' index.js"
 
   # ── Patch E: Chrome DevTools opener (still darwin/win32 only) ──────────────
   let alreadyE =

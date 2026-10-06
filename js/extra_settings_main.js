@@ -339,7 +339,7 @@
     };
   }
 
-  // The managed-config key catalog of Claude Desktop v2.7032.0 (178 keys), read out of the
+  // The managed-config key catalog of Claude Desktop v2.19675.1 (176 keys), read out of the
   // bundle's own schema (flat key, zod leaf type, scopes, title). Upstream drives
   // its 3P Setup wizard from that schema; we cannot reach it from here (it is
   // module-scoped in index.pre.js), so this is a PINNED COPY and is therefore
@@ -413,6 +413,9 @@
       label: "Gateway SSO IdP (OIDC)" },
     { key: "inferenceGatewayOidcAuthFlow", kind: "enum", group: "connection", scope: "3p", only: "gateway",
       label: "Gateway sign-in flow", options: ["browser", "broker"] },
+    { key: "inferenceGatewayManagedClaudeCode", kind: "bool", group: "connection", scope: "3p", only: "gateway",
+      label: "Gateway-managed Claude Code",
+      note: "Runs Claude Code in its gateway mode (CLAUDE_CODE_USE_GATEWAY) in Cowork, Chat and Code sessions for users signed in through the gateway's own sign-in; off by default." },
 
     { key: "inferenceVertexProjectId", kind: "text", group: "connection", scope: "3p", only: "vertex",
       label: "GCP project ID" },
@@ -540,29 +543,9 @@
     { key: "selfHostedUrl", kind: "text", group: "connection", scope: "3p",
       label: "Self-hosted execution URL",
       note: "Endpoint that runs sessions on your own infrastructure. The rest of this block only applies once it is set." },
-    { key: "selfHostedCredentialKind", kind: "enum", group: "connection", scope: "3p",
-      label: "Self-hosted credential kind", options: ["interactive", "helper-script", "static"],
-      note: "How the app authenticates to that endpoint: a browser or OS-broker sign-in, a helper script that prints the token, or a static token." },
-    { key: "selfHostedOidc", kind: "json", group: "connection", scope: "3p", secret: true,
-      label: "Self-hosted sign-in IdP (OIDC)",
-      note: "Same shape as the gateway SSO IdP: issuer or explicit endpoints, client ID, scopes, bearerTokenType and an optional RFC 8707 resource." },
-    { key: "selfHostedOidcAuthFlow", kind: "enum", group: "connection", scope: "3p",
-      label: "Self-hosted sign-in flow", options: ["browser", "broker"],
-      note: "The system browser, or the OS Microsoft Entra broker (WAM on Windows, Company Portal on macOS)." },
     { key: "selfHostedToken", kind: "secret", group: "connection", scope: "3p",
       label: "Self-hosted bearer token",
       note: "Static token sent as Authorization: Bearer. Prefer a helper script or a sign-in." },
-    { key: "selfHostedCredentialHelper", kind: "text", group: "connection", scope: "3p",
-      label: "Self-hosted credential helper",
-      note: "Absolute path to an executable that prints the token on stdout. Run with no arguments; same contract as the inference credential helper." },
-    { key: "selfHostedCredentialHelperTtlSec", kind: "int", group: "connection", scope: "3p",
-      label: "Self-hosted helper TTL (s)",
-      note: "Helper output is cached this long before the helper re-runs; blank means 3600." },
-    { key: "selfHostedCredentialHelperTimeoutSec", kind: "int", group: "connection", scope: "3p", max: 600,
-      label: "Self-hosted helper timeout (s)",
-      note: "Maximum wait for the helper to finish; blank means 60." },
-    { key: "selfHostedCredentialHelperSilentRefreshEnabled", kind: "bool", group: "connection", scope: "3p",
-      label: "Re-run self-hosted helper for silent refresh", dflt: true },
 
     // --- usage limits -------------------------------------------------------
     { key: "inferenceMaxTokensPerWindow", kind: "int", group: "limits", scope: "3p",
@@ -624,12 +607,15 @@
     { key: "codeAllowedRepositories", kind: "json", group: "sandbox", scope: "3p",
       label: "Allowed repositories",
       note: "JSON array of { source: \"github\", repo: \"owner/repo\" } or { source: \"git\", url } entries (optional ref) naming the Git repositories Claude Code may work in; up to 100 (upstream gates this @next)." },
-    { key: "deviceToolsEnabled", kind: "bool", group: "sandbox", scope: "3p",
-      label: "Allow device tools",
-      note: "Lets sessions on your organization's session host use file tools on the user's computer over the device connection; only applies with selfHostedUrl set, off by default (upstream gates this @next)." },
     { key: "skipWebFetchPreflight", kind: "bool", group: "sandbox", scope: "3p",
       label: "Skip WebFetch domain check",
       note: "Drops Claude Code's per-domain blocklist lookup against api.anthropic.com before a WebFetch; turn it on where that host is firewalled, since the fetch otherwise fails outright (upstream gates this @next)." },
+    { key: "coworkEDRIntegration", kind: "text", group: "sandbox", scope: "both",
+      label: "EDR Integration package path",
+      lock: "read from device management only and hidden in upstream's own wizard - deploy it through /etc/claude-desktop/managed-settings.json" },
+    { key: "coworkEDRIntegrationVendor", kind: "text", group: "sandbox", scope: "both",
+      label: "EDR Integration vendor ID",
+      lock: "read from device management only and hidden in upstream's own wizard - deploy it through /etc/claude-desktop/managed-settings.json" },
     { key: "organizationInstructions", kind: "text", group: "sandbox", scope: "3p", maxLen: 3000,
       label: "Organization instructions",
       note: "Free text appended in a delimited block after the app's own system prompt in Chat, Cowork and Code, presented to the model as outranking user preferences; guidance, not an enforced control, and capped at 3000 characters upstream." },
@@ -693,6 +679,9 @@
     { key: "allowedPluginMcpServers", kind: "json", group: "connectors", scope: "3p",
       label: "Allowed plugin MCP servers",
       note: "JSON array of { serverUrl } patterns, with * wildcards, that a plugin's remote MCP server must match. Up to 100 entries; an empty array blocks them all." },
+    { key: "deniedPluginMcpServers", kind: "json", group: "connectors", scope: "3p",
+      label: "Blocked plugin MCP servers",
+      note: "JSON array of { serverUrl } patterns, with * wildcards, that a plugin's remote MCP server may not connect to even when the allowed list admits it; in Code sessions configuration-file servers too. Up to 100 entries; unset or empty blocks none." },
     { key: "mcpPersistentAlwaysAllowEnabled", kind: "bool", group: "connectors", scope: "3p",
       label: "Allow persistent tool approvals", dflt: true },
     { key: "mcpScheduledTaskApprovalLifetimeDays", kind: "int", group: "connectors", scope: "3p", max: 3650,
@@ -703,6 +692,9 @@
       note: "Per-call deadline for every MCP tool call, 60 to 3600; Cowork and Chat default to 180, and setting it introduces a timeout in Code sessions too (upstream gates this @next)." },
     { key: "claudeInChromeEnabled", kind: "bool", group: "connectors", scope: "3p",
       label: "Enable Claude in Chrome" },
+    { key: "claudeInChromePasswordManagersEnabled", kind: "bool", group: "connectors", scope: "3p",
+      label: "Enable password managers in Claude in Chrome",
+      lock: "set by the Anthropic control plane from the organization's Claude in Chrome password-manager setting and hidden in upstream's own wizard, so this page never writes it" },
     { key: "isDesktopExtensionEnabled", kind: "bool", group: "connectors", scope: "both",
       label: "Allow desktop extensions" },
     { key: "isDesktopExtensionSignatureRequired", kind: "bool", group: "connectors", scope: "both",
@@ -721,6 +713,9 @@
       label: "Allowed plugin marketplaces" },
     { key: "orgPluginSettings", kind: "json", group: "plugins", scope: "3p",
       label: "Organization plugin settings" },
+    { key: "sharingEndpoint", kind: "json", group: "plugins", scope: "3p", secret: true,
+      label: "Organization sharing endpoint",
+      note: "HTTPS endpoint that receives the skills and plugins users publish to the organization; when set, users get a Publish to organization action. Nothing is installed from it." },
 
     { key: "skillBundles", kind: "json", group: "plugins", scope: "3p",
       label: "Skill bundles",

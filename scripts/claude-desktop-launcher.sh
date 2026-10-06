@@ -1424,11 +1424,12 @@ _diag_bus_owner() {
 }
 
 # The app's GlobalShortcuts portal probe, argument for argument: upstream
-# (2.7032.0, the function behind "[globalShortcut] GlobalShortcuts portal
+# (2.19675.1, the function behind "[globalShortcut] GlobalShortcuts portal
 # availability") runs `busctl --user --timeout=2 get-property
 # org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop
 # org.freedesktop.portal.GlobalShortcuts version` with a 3 s exec timeout and
-# calls the portal available when stdout matches /\bu\s+\d+/.
+# calls the portal available when stdout matches /\bu\s+(\d+)/ with a
+# version above 0; any failure counts as version 0.
 # $1 = the busctl command the app resolves. Echoes "yes <version>" or
 # "no (<reason>)".
 _diag_portal_probe_app() {
@@ -1436,7 +1437,11 @@ _diag_portal_probe_app() {
     out="$(timeout 3 "$1" --user --timeout=2 get-property org.freedesktop.portal.Desktop \
         /org/freedesktop/portal/desktop org.freedesktop.portal.GlobalShortcuts version 2>&1)" || rc=$?
     if [[ "$rc" == 0 && "$out" =~ (^|[^[:alnum:]_])u[[:space:]]+([0-9]+) ]]; then
-        echo "yes ${BASH_REMATCH[2]}"
+        if (( 10#${BASH_REMATCH[2]} > 0 )); then
+            echo "yes ${BASH_REMATCH[2]}"
+        else
+            echo "no (portal reports version 0)"
+        fi
     elif [[ "$rc" == 124 ]]; then
         echo "no (no answer within 3 s)"
     elif [[ "$rc" == 126 || "$rc" == 127 ]]; then
@@ -1894,9 +1899,6 @@ _diagnose() {
     _diag_cap fallback kwallet-query /usr/bin/kwallet-query "${_hc_kw:-0}" \
         'Chrome cookie import from KWallet' \
         'Chrome cookie import skips KWallet-encrypted cookies (install kwallet / kwalletmanager)'
-    _diag_cap fallback sqlite3 /usr/bin/sqlite3 1 \
-        'Recent Projects (reads the editors'"'"' state databases)' \
-        'Recent Projects stays empty (install sqlite3 / sqlite)'
     _diag_cap path xdg-open '' 1 \
         'opening links and "Open in" targets' \
         'links and "Open in ..." do nothing (install xdg-utils)'

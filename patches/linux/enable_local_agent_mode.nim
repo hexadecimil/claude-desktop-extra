@@ -58,9 +58,12 @@ proc apply*(input: string): string =
   # (re-verified v2.7032.0) - keep the distinction honest:
   #   quietPenguin   NEEDED  registry gives X(fn) -> unavailable when packaged
   #   louderPenguin  NEEDED  darwin/win32 + flag 4116586025 gated
-  #   computerUse    NEEDED  tests a Set([darwin,win32]) -> Linux gets
-  #                          {status:"unsupported"}; we ship the input +
-  #                          screenshot backends, so we override it
+  #   computerUse    NEEDED  since v2.19675.1 the platform Set includes linux,
+  #                          but Wayland is only "supported" when upstream's
+  #                          RemoteDesktop portal probe answers (wlroots and
+  #                          portal-less sessions get unsupported_session), and
+  #                          the account flag 3676943315 gates it; our bridges
+  #                          cover those sessions, so we override it
   #   chillingSlothFeat  inert  already returns {status:"supported"}
   #   chillingSlothLocal inert  already returns {status:"supported"}
   #   ccdPlugins         inert  registry value is literally {status:"supported"}
@@ -84,19 +87,28 @@ proc apply*(input: string): string =
     # append our overrides LAST so they win over both. Match the merger
     # structurally, then VERIFY the match semantically: the spread callee must
     # be the static feature registry, i.e. its body lists `quietPenguin:`.
+    # Minified names are only unique per chunk (v2.19675.1 defines `FU` in four
+    # chunks), so look the callee up only inside the chunk holding the match.
     let pattern3 = re2"return\{\.\.\.([\w$]+)\(\),\.\.\.[\w$]+\}\}"
+    const splitMarker = "/*__CDB_SPLIT__"
     var m3Count = 0
     var m3End = -1
     var m3Callee = ""
     for m in result.findAll(pattern3):
       let callee = result[m.group(0)]
-      let defIdx = strutils.find(result, "function " & callee & "(")
-      if defIdx >= 0:
-        let sliceEnd = min(defIdx + 4000, result.len - 1)
+      let chunkStart = max(result.rfind(splitMarker, last = m.boundaries.a), 0)
+      var chunkEnd = strutils.find(result, splitMarker, m.boundaries.b)
+      if chunkEnd < 0:
+        chunkEnd = result.len
+      var defIdx = strutils.find(result, "function " & callee & "(", chunkStart)
+      while defIdx >= 0 and defIdx < chunkEnd:
+        let sliceEnd = min(defIdx + 4000, chunkEnd - 1)
         if result[defIdx .. sliceEnd].contains("quietPenguin:"):
           inc m3Count
           m3End = m.boundaries.b
           m3Callee = callee
+          break
+        defIdx = strutils.find(result, "function " & callee & "(", defIdx + 1)
     if m3Count != 1:
       echo &"  [FAIL] feature merger: {m3Count} registry-verified matches, expected exactly 1"
       quit(1)

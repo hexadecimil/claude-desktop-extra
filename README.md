@@ -43,7 +43,7 @@ curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install-pacman.sh 
 sudo pacman -Syu claude-desktop-extra
 ```
 
-**Optional deps** (not installed automatically): QEMU/KVM for Cowork ([setup](docs/cowork.md)), `nodejs` (system MCP servers), `sqlite` (project detection), `gjs` (GNOME search provider), `claude-code`.
+**Optional deps** (not installed automatically): QEMU/KVM for Cowork ([setup](docs/cowork.md)), `nodejs` (system MCP servers), `gjs` (GNOME search provider), `claude-code`.
 
 <details>
 <summary>Manual <code>pacman.conf</code> setup (without the install script)</summary>
@@ -131,7 +131,7 @@ wget https://github.com/patrickjaja/claude-desktop-extra/releases/latest/downloa
 chmod +x Claude_Desktop-*-x86_64.AppImage && ./Claude_Desktop-*-x86_64.AppImage
 ```
 
-Delta updates: `appimageupdatetool Claude_Desktop-*.AppImage`. Works with AppImageLauncher and Gear Lever. For Cowork, install QEMU + UEFI firmware + virtiofsd from your distro ([Cowork setup](docs/cowork.md)).
+Delta updates: `appimageupdatetool Claude_Desktop-*.AppImage`. Works with AppImageLauncher and Gear Lever. Needs the host's PipeWire client library (`libpipewire-0.3.so.0`, present on every desktop with PipeWire). For Cowork, install QEMU + UEFI firmware + virtiofsd from your distro ([Cowork setup](docs/cowork.md)).
 </details>
 
 <a name="from-source"></a>
@@ -183,7 +183,7 @@ Settings → **Extra** holds everything this project adds: **Themes**, **Communi
 
 ## Computer Use
 
-Desktop automation (screenshot, click, type, scroll, teach mode) - not part of the official Linux build. Bundled bridges cover X11, XWayland, Sway / Hyprland / Niri, GNOME Wayland (PipeWire >= 1.0.5) and KDE Plasma 6.6+, with nothing to install. Details: [docs/computer-use.md](docs/computer-use.md), per-session matrix: [dependencies](docs/computer-use-dependencies.md).
+Desktop automation (screenshot, click, type, scroll, teach mode), on for every account and every session type. The official build's own Linux Computer Use is a staged rollout that needs a RemoteDesktop portal (GNOME 46+, current Plasma) and skips wlroots; our bundled bridges take precedence and cover X11, XWayland, Sway / Hyprland / Niri, GNOME Wayland (PipeWire >= 1.0.5) and KDE Plasma 6.6+, with nothing to install. Details: [docs/computer-use.md](docs/computer-use.md), per-session matrix: [dependencies](docs/computer-use-dependencies.md).
 
 ## Custom Themes
 
@@ -209,7 +209,7 @@ Override Anthropic's server-side feature flags in `~/.config/Claude/claude-deskt
 
 ## Patches
 
-We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (13 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (34, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
+We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (13 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (32, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
 
 ## Command-line flags
 

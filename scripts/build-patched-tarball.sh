@@ -466,6 +466,16 @@ if [ -d "$APP_DIR/app.asar.contents/compile-cache" ]; then
     rm -rf "$APP_DIR/app.asar.contents/compile-cache"
 fi
 
+# Keep @ant/claude-native loadable on the glibc 2.34 floor. Since v2.19675.1 it
+# needs GLIBC_2.39 only for two weak symbols, but ld.so rejects the whole file
+# on older glibc and safe-fs containment then refuses every file operation.
+# Fixed here, before the repack copies it into app.asar.unpacked/.
+log_info "Checking claude-native glibc floor..."
+if ! python3 -I "$SCRIPT_DIR/fix-native-glibc-floor.py" "$APP_DIR/app.asar.contents"; then
+    log_error "claude-native glibc floor fix failed"
+    exit 1
+fi
+
 # Repack app.asar into the tree.
 # --unpack keeps native .node files and any spawn-helper in app.asar.unpacked/ and
 # flags them in the asar header so Electron redirects require() to the unpacked copy.

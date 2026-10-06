@@ -6,7 +6,7 @@
 // --diagnose is what an issue reporter pastes. It is only useful when each
 // line answers the question the app itself asks:
 //
-//   - The app runs /usr/bin/{busctl,secret-tool,kwallet-query,sqlite3} by
+//   - The app runs /usr/bin/{busctl,secret-tool,kwallet-query} by
 //     literal path, and our patches fall back to PATH when the file is not
 //     there. "command -v busctl" is not that question: a NixOS host has busctl
 //     on PATH only, and a host with /usr/bin/busctl may have a different one
@@ -103,16 +103,16 @@ safe("D1", () => {
   const abs = join(root, "usr", "bin");
   const onPath = join(root, "path");
   writeExe(join(abs, "busctl"), "#!/bin/sh\n");
-  writeExe(join(onPath, "sqlite3"), "#!/bin/sh\n");
+  writeExe(join(onPath, "busctl"), "#!/bin/sh\n");
   writeExe(join(onPath, "gjs"), "#!/bin/sh\n");
   const env = { PATH: `${onPath}:${coreBin}` };
   const cap = (args) => runFns(["_diag_cap"],
     `_diag_problems=(); _diag_cap ${args}; printf 'P=%s\\n' "\${_diag_problems[@]:-}"`, env).out;
   const up = cap(`fallback busctl ${abs}/busctl 1 'portal probe' 'hotkeys off'`);
   check("upstream path wins", /^\[ok\] +busctl = .*usr\/bin\/busctl \(upstream path\)/.test(up), true);
-  const fb = cap(`fallback sqlite3 ${abs}/sqlite3 1 'recent projects' 'recent projects empty'`);
+  const fb = cap(`fallback busctl ${root}/none/busctl 1 'portal probe' 'hotkeys off'`);
   check("PATH only is reported as our fallback",
-    fb.includes(`sqlite3 = ${onPath}/sqlite3 (not at ${abs}/sqlite3; works through our PATH fallback)`), true);
+    fb.includes(`busctl = ${onPath}/busctl (not at ${root}/none/busctl; works through our PATH fallback)`), true);
   check("PATH only is not a problem", fb.endsWith("P="), true);
   const miss = cap(`fallback secret-tool ${abs}/secret-tool 1 'cookie import' 'cookies skipped'`);
   check("missing + needed is MISSING", /^\[MISS\] secret-tool = MISSING - cookies skipped/.test(miss), true);
@@ -131,8 +131,9 @@ safe("D1", () => {
 
 // ---------------------------------------------------------------- D2
 console.log("D2: portal probe is the app's exact busctl call");
-// What upstream 2.7032.0 runs (the fixed prefix of its busctl helper plus the
-// GlobalShortcuts get-property argument list).
+// What upstream 2.19675.1 runs (the fixed prefix of its busctl helper plus the
+// get-property argument list of its generic portal-version helper, called with
+// "GlobalShortcuts").
 const APP_ARGV = ["--user", "--timeout=2", "get-property", "org.freedesktop.portal.Desktop",
   "/org/freedesktop/portal/desktop", "org.freedesktop.portal.GlobalShortcuts", "version"];
 safe("D2", () => {
@@ -150,6 +151,8 @@ safe("D2", () => {
     readFileSync(argFile, "utf8").trim().split("\n").join(" "), APP_ARGV.join(" "));
   check("error reply -> no + first line",
     probe(fake("err", "echo 'No such interface' >&2; exit 1")), "no (No such interface)");
+  check("version 0 is no, as the app's >0 test",
+    probe(fake("zero", "echo 'u 0'")), "no (portal reports version 0)");
   check("output without a u-typed version is no",
     probe(fake("junk", "echo 's \"1\"'")).startsWith("no"), true);
   check("missing busctl -> cannot exec", probe(join(root, "absent")), `no (cannot exec ${join(root, "absent")})`);
@@ -163,11 +166,17 @@ safe("D2", () => {
       .map((f) => readFileSync(join(build, f), "latin1")).join("\n");
     const prefix = /["`]\/usr\/bin\/busctl["`],\[["`]--user["`],["`]--timeout=2["`],\.\.\.[\w$]+\]/.test(text);
     const q = (s) => `["\`]${s.replace(/[.\/]/g, "\\$&")}["\`]`;
-    const list = new RegExp(`\\[${APP_ARGV.slice(2).map(q).join(",")}\\]`).test(text);
+    // The interface is a template over the helper's parameter; the helper must
+    // also be called with "GlobalShortcuts".
+    const [gp, dest, obj, iface, prop] = APP_ARGV.slice(2);
+    const helper = new RegExp(`function ([\\w$]+)\\(([\\w$]+)\\)\\{try\\{let [\\w$]+=await [\\w$]+\\(\\[`
+      + [gp, dest, obj].map(q).join(",")
+      + `,\`${iface.replace(/GlobalShortcuts$/, "").replace(/\./g, "\\.")}\\$\\{\\2\\}\`,${q(prop)}\\]\\)`).exec(text);
+    const called = !!helper && new RegExp(`(?<![\\w$])${helper[1].replace(/\$/g, "\\$")}\\(["\`]GlobalShortcuts["\`]\\)`).test(text);
     check("bundle: busctl helper prefix unchanged", prefix, true);
-    check("bundle: GlobalShortcuts get-property argv unchanged", list, true);
+    check("bundle: GlobalShortcuts get-property argv unchanged", called, true);
   } else {
-    console.log("  NOTE no extracted bundle; argv pinned to upstream 2.7032.0 only");
+    console.log("  NOTE no extracted bundle; argv pinned to upstream 2.19675.1 only");
   }
 });
 
@@ -243,7 +252,7 @@ safe("D5", () => {
     out.includes("XDG_SESSION_TYPE = wayland (as passed to the app; raw from the session: tty)"), true);
   check("host capabilities section", out.includes("--- Host capabilities"), true);
   check("every probed tool has a line",
-    ["busctl", "secret-tool", "kwallet-query", "sqlite3", "xdg-open", "gjs", "python3", "socat"]
+    ["busctl", "secret-tool", "kwallet-query", "xdg-open", "gjs", "python3", "socat"]
       .every((t) => new RegExp(`^\\[(ok|MISS|--)\\] +${t} = `, "m").test(out)), true);
   check("tray host line", /^\[(ok|MISS|--|\?\?)\] +tray host = /m.test(out), true);
   check("all four bridges are run",
