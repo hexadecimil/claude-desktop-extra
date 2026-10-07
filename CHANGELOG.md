@@ -2,6 +2,32 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-10-07
+
+### Upstream v2.26454.0
+
+- Re-fitted three patches to the new build: transcript limits (the session
+  manager now passes an extra option first), the built-in MCP open-url
+  handler (now wrapped in `Object.assign`, and it calls
+  `require("electron")` directly so a shadowed variable can no longer break
+  it at runtime), and open-in-editor (VS Code, Cursor and Zed detection now
+  share one lookup that also tries `vscode-insiders://`; the Linux handler
+  lookup and the file-icon guard cover it).
+- **File types and sandbox deps, matching the official package:** `.mcpb`,
+  `.dxt` and `.skill` files now open in Claude Desktop (every package registers
+  the MIME types; the AppImage registers them per user on first launch).
+  `bubblewrap` and `socat` are now recommended/optional dependencies -
+  Claude Code shell commands under an organization sandbox need both on Linux.
+- **Tray-less desktops:** upstream now quits on window close itself when a
+  Wayland session has no tray host, so `fix_tray_less_desktops` keeps only
+  its other half: a hidden autostart launch still shows the window when there
+  is no tray to reach it from.
+- The official native module no longer needs anything above glibc 2.34; the
+  glibc floor step stays in the build as a guard.
+- Flag template 450 -> 482 entries (+34, -2), Extra -> Deployment catalog
+  176 -> 179 keys (new: `disableConnectorSignInInApp`,
+  `microsoftAuthDefaultAccount`, `quickWriteEnabled`).
+
 ## 2026-10-06
 
 ### Upstream v2.19675.1

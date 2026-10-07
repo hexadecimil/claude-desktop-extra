@@ -80,6 +80,11 @@ Recommends:     edk2-ovmf
 Recommends:     edk2-aarch64
 %endif
 Recommends:     virtiofsd
+# Claude Code shell sandbox: upstream needs bubblewrap and socat on Linux when
+# an organization sandbox policy applies (socat also speeds up the Quick Entry
+# toggle). Recommends, as the official .deb declares them.
+Recommends:     bubblewrap
+Recommends:     socat
 # Computer Use is fully first-party now: bundled x11-bridge (X11/XWayland),
 # wlroots-bridge (Sway/Hyprland/Niri), gnome-portal-bridge (GNOME Wayland) and
 # kwin-portal-bridge (KDE Plasma 6.6+). Remaining Suggests cover only the
@@ -89,8 +94,6 @@ Recommends:     virtiofsd
 #   requires ydotoold daemon)
 Suggests:       ImageMagick
 Suggests:       ydotool
-# Faster Quick Entry toggle via socket (~2ms vs ~25ms python3 — not required)
-Suggests:       socat
 # Hardware Buddy (Nibblet BLE pet): the bluez daemon is what Web Bluetooth talks
 # to; without it running, the in-app device scan finds nothing. Soft dep.
 Suggests:       bluez
@@ -180,7 +183,7 @@ StartupWMClass=com.anthropic.Claude
 # second-instance just focuses mainWindow; suppress GNOME's default "New Window" item
 SingleMainWindow=true
 Categories=Utility;Development;
-MimeType=x-scheme-handler/claude;
+MimeType=x-scheme-handler/claude;application/vnd.anthropic.mcpb;application/vnd.anthropic.skill;
 Actions=NewChat;NewCode;
 
 [Desktop Action NewChat]
@@ -218,6 +221,16 @@ install -pDm644 "$SP_SRC/com.anthropic.Claude.search-provider.ini" \
     %{buildroot}/usr/share/gnome-shell/search-providers/com.anthropic.Claude.search-provider.ini
 install -pDm644 "$SP_SRC/com.anthropic.Claude.SearchProvider.service" \
     %{buildroot}/usr/share/dbus-1/services/com.anthropic.Claude.SearchProvider.service
+
+# Shared MIME types (.mcpb/.dxt extensions, .skill). Upstream's postinst copies
+# this file at configure time; as a package file, shared-mime-info's
+# %%transfiletriggerin on /usr/share/mime rebuilds the database instead.
+MIME_SRC=%{buildroot}/usr/lib/claude-desktop/resources/linux-mime/com.anthropic.Claude.xml
+if [ ! -f "$MIME_SRC" ]; then
+    echo "ERROR: resources/linux-mime/com.anthropic.Claude.xml missing - upstream layout changed; re-audit" >&2
+    exit 1
+fi
+install -pDm644 "$MIME_SRC" %{buildroot}/usr/share/mime/packages/com.anthropic.Claude.xml
 
 %post
 # Ensure chrome-sandbox has SUID root (required by Chromium's setuid sandbox)
@@ -295,6 +308,14 @@ for pair in \
         mkdir -p "$d" && cp -p "$SP_SRC/$f" "$d/$f" && chmod 0644 "$d/$f" || :
     fi
 done
+# Same for the MIME types file; restored outside rpm's file install, so
+# rebuild the database here.
+MIME_SRC=/usr/lib/claude-desktop/resources/linux-mime/com.anthropic.Claude.xml
+MIME_XML=/usr/share/mime/packages/com.anthropic.Claude.xml
+if [ ! -e "$MIME_XML" ] && [ -f "$MIME_SRC" ]; then
+    mkdir -p /usr/share/mime/packages && cp -p "$MIME_SRC" "$MIME_XML" && chmod 0644 "$MIME_XML" || :
+    command -v update-mime-database >/dev/null 2>&1 && update-mime-database /usr/share/mime || :
+fi
 :
 
 %files
@@ -306,3 +327,4 @@ done
 /usr/share/icons/hicolor/*/apps/claude-desktop.png
 /usr/share/gnome-shell/search-providers/com.anthropic.Claude.search-provider.ini
 /usr/share/dbus-1/services/com.anthropic.Claude.SearchProvider.service
+/usr/share/mime/packages/com.anthropic.Claude.xml

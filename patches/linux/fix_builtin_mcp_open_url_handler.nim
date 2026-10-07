@@ -17,71 +17,39 @@
 # Safety: the branch only accepts string URLs starting with https:// so a
 # compromised MCP child cannot open file:// or other schemes via the parent.
 #
-# Anchors: the unique "msal-cache-get" literal for the injection site, plus the
-# electron namespace var recovered from X.safeStorage.decryptString( within the
-# SAME code-split chunk as the injection site. Since v1.20186.1 the bundle is
-# split into 82 chunks (separated by /*__CDB_SPLIT__<name>__*/ markers by the
-# orchestrator) and each chunk is a distinct runtime module with its own
-# electron require: a bundle-wide safeStorage scan now sees several vars (e.g.
-# x in the MSAL host chunk, ne in an unrelated token-cache chunk). We therefore
-# scope the scan to the injection-site chunk, where the var is unambiguous.
+# Anchors: the unique "msal-cache-get" literal for the injection site. The
+# electron module is reached via `require("electron")` at the injection site
+# rather than the chunk's minified electron var: since v2.26454.0 the handler is
+# `(n,a)=>{...}` inside a function that also binds `a`, while the chunk's
+# electron var is `a` too, so any recovered chunk-level name can be shadowed.
+# `require` is the chunk's own CJS require (the chunk head does
+# `let a=require("electron")`), never shadowed by minified locals.
 # All minified identifiers ([\w$]+) are captured and reused.
 
-import std/[os, strutils, sets]
+import std/os
 import regex
-
-const SPLIT_MARKER = "/*__CDB_SPLIT__"
 
 proc apply*(input: string): string =
   # Idempotency: positive end-state -- the open-url branch must be present.
-  if """==="open-url"&&typeof""" in input:
+  if input.contains(
+    re2"""===["`]open-url["`]&&typeof [\w$]+\.url==["`]string["`]&&[\w$]+\.url\.startsWith\(["`]https://["`]\)\)\{require\(["`]electron["`]\)\.shell\.openExternal\("""
+  ):
     echo "  [OK] built-in MCP open-url handler: already patched"
     return input
 
-  # Step 1: inject the branch at the head of the child-message if-chain.
+  # Inject the branch at the head of the child-message if-chain.
   # Matches (v1.20186.1): };return(d,f)=>{const p=d;if((p==null?void 0:p.type)==="msal-cache-get"
   # Matches (v1.26832.0): };return(a,c)=>{let u=a;if(u?.type===`msal-cache-get`
+  # Matches (v2.26454.0): };return Object.assign(((n,a)=>{let o=n;if(o?.type==="msal-cache-get"
   # The v1.26832.0 minifier switched to `let`, native optional chaining instead
   # of the (x==null?void 0:x.y) desugaring, and backtick template literals - all
-  # three are accepted below so the patch spans both bundle shapes.
+  # three are accepted below so the patch spans every bundle shape. v2.26454.0
+  # wraps the handler as `Object.assign(<handler>,{holdsAccount:...})`; the
+  # handler body (where we inject) is unchanged.
   # Groups: 0=head incl. "let p=d;", 1=message param, 2=message var,
   # 3=original if-head.
   let pattern =
-    re2"""(\};return\(([\w$]+),[\w$]+\)=>\{(?:const|let|var) ([\w$]+)=[\w$]+;)(if\((?:\([\w$]+==null\?void 0:[\w$]+\.type\)|[\w$]+\?\.type)===["`]msal-cache-get["`])"""
-
-  # Locate the injection site so we can scope the electron-var scan to its chunk.
-  var injMatches: seq[RegexMatch2] = @[]
-  for m in input.findAll(pattern):
-    injMatches.add(m)
-  if injMatches.len != 1:
-    echo "  [FAIL] built-in MCP open-url handler: found " & $injMatches.len &
-      " msal-cache-get injection sites (expected 1)"
-    quit(1)
-  let injPos = injMatches[0].boundaries.a
-
-  # Step 2: recover the electron namespace var from within the injection-site
-  # chunk only. The chunk spans from the split marker preceding injPos to the
-  # next split marker after it (or the buffer ends). safeStorage.decryptString(
-  # is used by the MSAL host module and resolves to a single electron var here.
-  var chunkStart = input.rfind(SPLIT_MARKER, last = injPos)
-  if chunkStart < 0:
-    chunkStart = 0
-  var chunkEnd = input.find(SPLIT_MARKER, start = injPos)
-  if chunkEnd < 0:
-    chunkEnd = input.len
-  let chunk = input[chunkStart ..< chunkEnd]
-
-  var electronVars = initHashSet[string]()
-  for m in chunk.findAll(re2"((?:[\w$]+\.)*[\w$]+)\.safeStorage\.decryptString\("):
-    electronVars.incl(chunk[m.group(0)])
-  if electronVars.len != 1:
-    echo "  [FAIL] built-in MCP open-url handler: expected exactly 1 distinct " &
-      "electron ns var via safeStorage.decryptString in the injection-site " &
-      "chunk, found " & $electronVars.len
-    quit(1)
-  var electronVar = ""
-  for v in electronVars:
-    electronVar = v
+    re2"""(\};return(?:\(| Object\.assign\(\(\()([\w$]+),[\w$]+\)=>\{(?:const|let|var) ([\w$]+)=[\w$]+;)(if\((?:\([\w$]+==null\?void 0:[\w$]+\.type\)|[\w$]+\?\.type)===["`]msal-cache-get["`])"""
 
   var count = 0
   result = input.replace(
@@ -93,12 +61,13 @@ proc apply*(input: string): string =
       let ifHead = s[m.group(3)]
       head & "if((" & msgVar & "==null?void 0:" & msgVar &
         ".type)===\"open-url\"&&typeof " & msgVar & ".url==\"string\"&&" & msgVar &
-        ".url.startsWith(\"https://\")){" & electronVar & ".shell.openExternal(" & msgVar &
-        ".url).catch(()=>{});return}" & ifHead,
+        ".url.startsWith(\"https://\")){require(\"electron\").shell.openExternal(" &
+        msgVar & ".url).catch(()=>{});return}" & ifHead,
   )
 
   if count != 1:
-    echo "  [FAIL] built-in MCP open-url handler: " & $count & " matches (expected 1)"
+    echo "  [FAIL] built-in MCP open-url handler: found " & $count &
+      " msal-cache-get injection sites (expected 1)"
     quit(1)
 
   echo "  [OK] built-in MCP open-url handler: shell.openExternal branch added"

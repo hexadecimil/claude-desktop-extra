@@ -144,7 +144,7 @@ StartupWMClass=com.anthropic.Claude
 # second-instance just focuses mainWindow; suppress GNOME's default "New Window" item
 SingleMainWindow=true
 Categories=Utility;Development;
-MimeType=x-scheme-handler/claude;
+MimeType=x-scheme-handler/claude;application/vnd.anthropic.mcpb;application/vnd.anthropic.skill;
 Actions=NewChat;NewCode;
 
 [Desktop Action NewChat]
@@ -183,6 +183,17 @@ fi
 install -pDm644 "$SP_SRC/com.anthropic.Claude.search-provider.ini" "$DEB_ROOT/$SP_INI"
 install -pDm644 "$SP_SRC/com.anthropic.Claude.SearchProvider.service" "$DEB_ROOT/$SP_SERVICE"
 
+# Shared MIME types (.mcpb/.dxt extensions, .skill). Upstream's postinst copies
+# resources/linux-mime/com.anthropic.Claude.xml into /usr/share/mime/packages/
+# and runs update-mime-database; as a package file, shared-mime-info's dpkg
+# trigger on /usr/share/mime/packages rebuilds the database instead.
+MIME_SRC="$DEB_ROOT/usr/lib/claude-desktop/resources/linux-mime/com.anthropic.Claude.xml"
+if [ ! -f "$MIME_SRC" ]; then
+    log_error "MIME types file missing from the tree: resources/linux-mime/com.anthropic.Claude.xml - upstream layout changed; re-audit"
+    exit 1
+fi
+install -pDm644 "$MIME_SRC" "$DEB_ROOT/usr/share/mime/packages/com.anthropic.Claude.xml"
+
 # Debian policy: ship a copyright file under usr/share/doc/<pkg>/. The tarball
 # carries the upstream notice at its root (extracted from the official .deb by
 # build-patched-tarball.sh). Warn-only: pre-2026-07 release tarballs lack it.
@@ -210,6 +221,9 @@ INSTALLED_SIZE=$(du -sk "$DEB_ROOT" | cut -f1)
 # - gjs: runs the GNOME Shell search provider (preinstalled with GNOME Shell).
 # - ydotool (>= 1.0): our executor speaks the 1.x CLI; Debian/Ubuntu ship 0.1.8,
 #   which does not understand it, so the unversioned name would pull a broken one.
+# - bubblewrap + socat: the Claude Code shell sandbox (organization sandbox
+#   policy) needs both on Linux; socat also speeds up the Quick Entry toggle.
+#   Recommends, as upstream declares them.
 log_info "Creating control file..."
 cat > "$DEB_ROOT/DEBIAN/control" << EOF
 Package: claude-desktop-extra
@@ -219,8 +233,8 @@ Priority: optional
 Architecture: ${DEB_ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Depends: libgtk-3-0, libnotify4, libnss3, xdg-utils, libatspi2.0-0, libdrm2, libgbm1, libxcb-dri3-0, libsecret-1-0, kde-cli-tools | kde-runtime | trash-cli | libglib2.0-bin | gvfs, libc6 (>= 2.34), libxtst6, libuuid1, libpipewire-0.3-0, xdg-desktop-portal, xdg-desktop-portal-gtk | xdg-desktop-portal-gnome | xdg-desktop-portal-kde
-Recommends: libasound2t64 | libasound2 | pulseaudio, libayatana-appindicator3-1 | libappindicator3-1, ca-certificates, gnome-keyring | plasma-workspace, libsecret-tools, ${COWORK_RECOMMENDS}
-Suggests: imagemagick, socat, ydotool (>= 1.0), kde-spectacle, nodejs, bluez, gjs
+Recommends: libasound2t64 | libasound2 | pulseaudio, libayatana-appindicator3-1 | libappindicator3-1, ca-certificates, gnome-keyring | plasma-workspace, libsecret-tools, bubblewrap, socat, ${COWORK_RECOMMENDS}
+Suggests: imagemagick, ydotool (>= 1.0), kde-spectacle, nodejs, bluez, gjs
 Conflicts: claude-desktop
 Replaces: claude-desktop, claude-desktop-bin (<< ${DEB_VERSION})
 Breaks: claude-desktop-bin (<< ${DEB_VERSION})
@@ -253,10 +267,10 @@ fi
 
 case "$1" in
   configure)
-    # GNOME search provider files are package files, but when `dpkg -i` replaces
-    # Anthropic's claude-desktop package, its postrm runs AFTER our unpack and
-    # deletes the same two paths. Our postinst runs after that postrm, so put
-    # the shipped bytes back from resources/ (identical content).
+    # GNOME search provider and MIME types files are package files, but when
+    # `dpkg -i` replaces Anthropic's claude-desktop package, its postrm runs
+    # AFTER our unpack and deletes the same paths. Our postinst runs after that
+    # postrm, so put the shipped bytes back from resources/ (identical content).
     SP_SRC=/usr/lib/claude-desktop/resources/gnome-search-provider
     for pair in \
         "com.anthropic.Claude.search-provider.ini:/usr/share/gnome-shell/search-providers" \
@@ -268,6 +282,18 @@ case "$1" in
             chmod 0644 "$d/$f"
         fi
     done
+    MIME_SRC=/usr/lib/claude-desktop/resources/linux-mime/com.anthropic.Claude.xml
+    MIME_XML=/usr/share/mime/packages/com.anthropic.Claude.xml
+    if [ ! -e "$MIME_XML" ] && [ -f "$MIME_SRC" ]; then
+        mkdir -p /usr/share/mime/packages
+        cp -p "$MIME_SRC" "$MIME_XML"
+        chmod 0644 "$MIME_XML"
+        # Restored outside dpkg's unpack, so the shared-mime-info trigger may
+        # already have run without it.
+        if command -v update-mime-database >/dev/null 2>&1; then
+            update-mime-database /usr/share/mime || true
+        fi
+    fi
 
     # AppArmor userns profile (gated on AppArmor 4.0; unparseable/unnecessary on 3.x).
     if [ -f /etc/apparmor.d/abi/4.0 ]; then

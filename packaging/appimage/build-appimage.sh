@@ -190,7 +190,7 @@ StartupWMClass=com.anthropic.Claude
 # second-instance just focuses mainWindow; suppress GNOME's default "New Window" item
 SingleMainWindow=true
 Categories=Utility;Development;
-MimeType=x-scheme-handler/claude;
+MimeType=x-scheme-handler/claude;application/vnd.anthropic.mcpb;application/vnd.anthropic.skill;
 Actions=NewChat;NewCode;
 X-AppImage-Version=${VERSION}
 

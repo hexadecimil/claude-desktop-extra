@@ -14,6 +14,18 @@ channel**, not remote markup - the preload (`.vite/build/mainView.js`) exposes i
 site `add_feature_files_quick_open_worker.nim` rewrites). Verified on 1.40609.0. Only the DOM and
 fiber rows are genuinely remote.
 
+**Local rows re-verified statically on v2.26454.0 (2026-10-07, pristine extract):** the generic
+worker-host fork is still exactly one `utilityProcess.fork(r,[],{serviceName:t,stdio:"pipe"})` (the
+other three fork sites keep their shapes: MCP host `fork(e,t,{...o,env:s})`, the shell extractor with a
+literal `serviceName`, the pty host `fork(t.aB("pty-host","ptyHostWorker.js")`), and its host is still
+`worker:{buildName:"file-index-worker",fileName:"fileIndexWorker.js"}`; `mainView.js` still invokes
+`Resources_$_fetchMentionOptions` and main implements it as `fetchMentionOptions:(e,t)=>Dhr(e,t??void 0)`
+on the eIPC `Resources` interface; `file-index-worker/fileIndexWorker.js` contains `of this.index.search(`
+exactly once. The DOM/fiber rows were not re-measured live. NB the 3P Code tab renders from the LOCAL
+`resources/ion-dist` SPA, and on v2.26454.0 that copy carries the same strings (`"Filter files"` 1,
+`"Show file tree"` 4, `"Hide file tree"` 2, `data-perf-screen` 3, `"More options for ` 39, `onPreview:` 28),
+so a 3P-mode regression can be grepped there; 1P mode still loads remote claude.ai.
+
 ## Anchors
 
 | Anchor | Used for | Measured value | If it moves |

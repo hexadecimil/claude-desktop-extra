@@ -1,5 +1,5 @@
 /* __cdb_tray_host_v1__
-   Tray-host detection for upstream's close-to-tray and hidden-launch paths.
+   Tray-host detection for upstream's hidden-launch path.
 
    Inlined by patches/linux/fix_tray_less_desktops.nim as a bare expression.
    It evaluates to one shared object (globalThis.__cdbTrayHost) with:
@@ -7,29 +7,26 @@
        called right after upstream creates the main window. When the window
        was born hidden (a --startup / autostart launch) and there is no tray
        to get it back from, it calls upstream's own showMainWindow.
-     quitOnClose()
-       called by the close handler next to upstream's own
-       `!menuBarEnabled -> quit` branch. true = take that branch.
      state()
        "pending" | "present" | "absent" | "unknown" (for tests / diagnostics).
 
-   Why: upstream hides the window on close whenever the tray setting is on
-   (the default) and creates it hidden on --startup, without ever checking
-   that a tray host exists. On a Wayland session without an
+   Why: upstream creates the main window hidden on --startup and relies on
+   the tray icon to bring it back. On a Wayland session without an
    org.kde.StatusNotifierWatcher (vanilla GNOME without AppIndicator,
    sway/niri without a tray-capable bar) the Electron Tray has nowhere to go,
-   so the app becomes an invisible process.
+   so the app becomes an invisible process. Closing the window on such a
+   desktop is handled by upstream itself (it quits).
 
-   Decision table (FAIL-SAFE DIRECTION IS UPSTREAM BEHAVIOR):
-     watcher on the bus                  -> upstream, unchanged
-     probe pending / no tool / bus error -> upstream, unchanged
-     X11 session, no watcher             -> upstream, unchanged. Electron then
-                                            falls back to an XEmbed
+   Decision table for a hidden launch (FAIL-SAFE DIRECTION IS UPSTREAM
+   BEHAVIOR, i.e. stay hidden):
+     watcher on the bus                  -> stays hidden (upstream)
+     probe pending / no tool / bus error -> stays hidden (upstream)
+     X11 session, no watcher             -> stays hidden (upstream). Electron
+                                            then falls back to an XEmbed
                                             GtkStatusIcon, which an XEmbed tray
                                             (i3bar, tint2, ...) can host, and
                                             that tray is invisible to the bus.
-     Wayland session, no watcher         -> close quits (upstream's own no-tray
-                                            branch), a hidden launch is shown
+     Wayland session, no watcher         -> shown
    Independently: a hidden launch while the tray is switched off in settings
    is shown, because upstream creates no tray icon in that case at all.
 
@@ -82,7 +79,7 @@
       "StatusNotifierWatcher " + s + " (" + why + "), session=" +
         (wayland ? "wayland" : "x11") + " -> " +
         (s === "absent" && wayland
-          ? "no tray host: close quits, a hidden launch is shown"
+          ? "no tray host: a hidden launch is shown"
           : "upstream tray behavior unchanged")
     );
     waiters.splice(0).forEach((f) => {
@@ -112,11 +109,6 @@
   const missing = () => wayland && st === "absent";
   const api = {
     state: () => st,
-    quitOnClose() {
-      const q = missing();
-      if (q) diag("main window closed with no tray host - quitting instead of hiding");
-      return q;
-    },
     startup(visible, show, trayEnabled) {
       if (visible) return;
       const doShow = (why) => {

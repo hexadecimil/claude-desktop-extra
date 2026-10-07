@@ -18,11 +18,12 @@
 #   registered and nothing otherwise. xdg-utils ships xdg-mime on every supported
 #   distro (it is already a runtime dep for xdg-open, used by the launcher).
 #
-# WHAT THE 7 CALL SITES CONSUME (verified against the bundle):
-#   - isVSCodeInstalled():            return!!(X!=null&&X.path)            // truthiness only
-#   - openInVSCode()/openInEditor():  if(!(X!=null&&X.path))return!1; ... shell.openExternal("vscode://file/…")
-#                                                                          // .path only gates; the open is shell.openExternal
-#   - editor/Xcode detection:         o=!!(X!=null&&X.path)                // truthiness only
+# WHAT THE CALL SITES CONSUME (verified against the v2.26454.0 bundle):
+#   - editor resolver op(<editorEntry>): tries `protocol` then the optional
+#     `fallbackProtocol` (e.g. "vscode-insiders://"), returns {protocol,info:X}
+#     on the first `X?.path`. Both getInstalledEditors() (installed flag +
+#     X.icon / getFileIcon(X.path)) and openInEditor() (gates on non-null, then
+#     shell.openExternal("<protocol>file/...")) go through it.
 #   - mailto/external link dialogs:   X.name (display) and X.icon.isEmpty()
 #   So the shim must return {path:<truthy when registered>, name:<display>, icon:{isEmpty:()=>!0}}
 #   or null. We map .path/.name to the handler's .desktop name (path) and a
@@ -66,10 +67,10 @@ proc apply*(input: string): string =
   # We capture <var> (minified Electron binding) and <arg> and wrap them so the
   # original (non-Linux) call is preserved on the false branch.
   let markerCount = input.count(PATCHED_MARKER)
-  if markerCount == 4:
+  if markerCount == 3:
     echo "  [OK] getApplicationInfoForProtocol Linux shim: already patched (skipped)"
   elif markerCount != 0:
-    echo &"  [FAIL] getApplicationInfoForProtocol shim present at {markerCount} sites, expected 4"
+    echo &"  [FAIL] getApplicationInfoForProtocol shim present at {markerCount} sites, expected 3"
     raise newException(
       ValueError, "fix_open_in_editor_linux: partially shimmed input, re-audit"
     )
@@ -85,10 +86,16 @@ proc apply*(input: string): string =
         let a = s[m.group(1)]
         LINUX_SHIM_HEAD & a & "):" & v & ".app.getApplicationInfoForProtocol(" & a & "))",
     )
-    # Expected sites (clean .deb bundle, v1.26832.0): 4
-    #   2× link-open dialogs (mailto/external): read .name and .icon
-    #   2× <editorTable>.protocol: editor/Xcode installed-detection and the
-    #      open path, both of which gate on `.path` being truthy
+    # Expected sites (clean .deb bundle, v2.26454.0): 3
+    #   2x link-open dialogs (mailto/external): read .name and .icon
+    #   1x the shared editor resolver op(): `for(let e of [protocol,fallbackProtocol])
+    #      ...getApplicationInfoForProtocol(e);if(t?.path)return{protocol:e,info:t}`,
+    #      called by BOTH getInstalledEditors() and openInEditor(). The generic
+    #      scheme split below covers "vscode-insiders://" like any other scheme.
+    #
+    # v1.26832.0 .. v2.19675.1 had 4: the two link dialogs plus two separate
+    # `<editorTable>.protocol` lookups (installed-detection and the open path),
+    # which v2.26454.0 merged into op().
     #
     # v1.24012.9 had 6: the two above pairs plus TWO copies of a legacy
     # `isVSCodeInstalled(){…getApplicationInfoForProtocol("vscode://")}` method
@@ -99,8 +106,8 @@ proc apply*(input: string): string =
     # `.protocol` sites. That is an upstream dedup, NOT native Linux support:
     # both surviving sites still gate on Electron's macOS/Windows-only
     # getApplicationInfoForProtocol, so the shim stays load-bearing.
-    if count1 != 4:
-      echo &"  [FAIL] getApplicationInfoForProtocol shim: {count1} match(es), expected 4"
+    if count1 != 3:
+      echo &"  [FAIL] getApplicationInfoForProtocol shim: {count1} match(es), expected 3"
       raise newException(
         ValueError,
         "fix_open_in_editor_linux: getApplicationInfoForProtocol site count changed, re-audit",
@@ -114,17 +121,20 @@ proc apply*(input: string): string =
   # nim-regex (NFA) has no backreferences, so capture the icon-var uses separately
   # and verify they refer to the same identifier at runtime.
   #
+  # Matches (v2.26454.0): (!e||e.isEmpty())&&(e=await Se.app.getFileIcon(a.info.path,{size:"normal"}))
+  # (earlier releases had a plain `<n>.path`; the path receiver is a dotted chain).
+  #
   # Idempotency: our guarded form inserts `&&process.platform!=="linux"&&(` directly
   # before the `<var>=await <v>.app.getFileIcon(<n>.path,{size:"normal"})` assignment.
   # Positively assert that exact guarded shape (not a loose substring that other
   # Linux patches could also produce) before accepting "already patched".
   let guardedPat =
-    re2"""&&process\.platform!=="linux"&&\([\w$]+=await [\w$]+(?:\.[\w$]+)*\.app\.getFileIcon\([\w$]+\.path,\{size:"normal"\}\)\)"""
+    re2"""&&process\.platform!=="linux"&&\([\w$]+=await [\w$]+(?:\.[\w$]+)*\.app\.getFileIcon\([\w$]+(?:\.[\w$]+)*\.path,\{size:"normal"\}\)\)"""
   if result.findAll(guardedPat).len == 1:
     echo "  [OK] getFileIcon Linux guard: already present (skipped)"
   else:
     let pattern2 =
-      re2"""\(!([\w$]+)\|\|([\w$]+)\.isEmpty\(\)\)&&\(([\w$]+)=await ([\w$]+(?:\.[\w$]+)*)\.app\.getFileIcon\(([\w$]+)\.path,\{size:["`]normal["`]\}\)\)"""
+      re2"""\(!([\w$]+)\|\|([\w$]+)\.isEmpty\(\)\)&&\(([\w$]+)=await ([\w$]+(?:\.[\w$]+)*)\.app\.getFileIcon\(([\w$]+(?:\.[\w$]+)*)\.path,\{size:["`]normal["`]\}\)\)"""
     var count2 = 0
     result = result.replace(
       pattern2,

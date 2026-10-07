@@ -1,22 +1,20 @@
 #!/usr/bin/env node
-// Tray-less desktops: close-to-tray and hidden launches need a tray host.
+// Tray-less desktops: a hidden (--startup) launch needs a tray host.
 //
 // WHY THIS EXISTS
 // ---------------
-// Upstream's main-window close handler hides the window whenever the
-// "menuBarEnabled" setting is on (the default), and a `--startup` (autostart)
-// launch creates the window hidden. Both assume a tray icon the user can click
-// to get back in. Upstream never checks that a tray host exists. On a Wayland
-// session without an org.kde.StatusNotifierWatcher on the session bus (vanilla
-// GNOME without the AppIndicator extension, sway/niri without a tray-capable
-// bar) Electron's Tray has nowhere to go, so closing the window leaves an
-// invisible process and an autostart launch shows nothing at all.
+// A `--startup` (autostart) launch creates the main window hidden and relies
+// on the tray icon to bring it back. On a Wayland session without an
+// org.kde.StatusNotifierWatcher on the session bus (vanilla GNOME without the
+// AppIndicator extension, sway/niri without a tray-capable bar) Electron's
+// Tray has nowhere to go, so an autostart launch shows nothing at all.
+// (Closing the window on such a desktop is upstream's own business: its close
+// handler quits when no tray icon is shown, and the patch leaves it alone.)
 //
 // patches/linux/fix_tray_less_desktops.nim injects js/tray_host_probe.js:
 //
 //   - a watcher on the bus (or any doubt)  -> upstream behavior, unchanged
-//   - Wayland and NO watcher               -> close quits (upstream's own
-//     no-tray branch), a hidden launch shows the window
+//   - Wayland and NO watcher               -> a hidden launch shows the window
 //   - X11 and no watcher                   -> unchanged: Electron falls back to
 //     an XEmbed GtkStatusIcon there, which an XEmbed tray can host, and we
 //     cannot see that tray from the bus
@@ -25,8 +23,8 @@
 //
 // Part [A] pins that truth table against the real module source with
 // child_process/process shimmed. Part [B] runs the compiled patch on the
-// upstream shapes (copied from the 2.7032.0 bundle) and drives the patched
-// close handler and window creation.
+// upstream shapes (copied from the 2.26454.0 bundle) and drives the patched
+// window creation and the (untouched) upstream close handler.
 //
 // Exit codes follow the repo convention: 0 = PASS, 3 = SKIP, other = FAIL.
 
@@ -134,11 +132,11 @@ async function partA() {
   {
     const ctx = makeEnv({ bus: { busctl: "true" }, env: WAYLAND });
     const m = loadModule(ctx);
-    check("before the probe settles, close keeps upstream (hide)", m.quitOnClose(), false);
+    check("before the probe settles, state is pending", m.state(), "pending");
+    check("no close-handler hook is exported (upstream owns close)", "quitOnClose" in m, false);
     let shown = 0;
     m.startup(false, () => shown++, () => true);
     await tick();
-    check("close keeps upstream (hide)", m.quitOnClose(), false);
     check("hidden --startup launch stays hidden", shown, 0);
     check("state is present", m.state(), "present");
     check("first probe is busctl", ctx.calls[0].bin, "busctl");
@@ -155,7 +153,7 @@ async function partA() {
     );
   }
 
-  section("[A2] Wayland WITHOUT a watcher: close quits, hidden launch shows");
+  section("[A2] Wayland WITHOUT a watcher: hidden launch shows");
   {
     const ctx = makeEnv({ bus: { busctl: "false" }, env: WAYLAND });
     const m = loadModule(ctx);
@@ -163,7 +161,6 @@ async function partA() {
     m.startup(false, () => shown++, () => true);
     await tick();
     check("state is absent", m.state(), "absent");
-    check("close quits", m.quitOnClose(), true);
     check("hidden --startup launch is shown once", shown, 1);
     check(
       "decision is logged via __cdbDiag",
@@ -212,7 +209,6 @@ async function partA() {
     m.startup(false, () => shown++, () => true);
     await tick();
     check("no tool at all -> unknown", m.state(), "unknown");
-    check("unknown keeps upstream close (hide)", m.quitOnClose(), false);
     check("unknown keeps a hidden launch hidden", shown, 0);
   }
 
@@ -223,7 +219,7 @@ async function partA() {
     let shown = 0;
     m.startup(false, () => shown++, () => true);
     await tick();
-    check("X11 close keeps upstream (hide)", m.quitOnClose(), false);
+    check("X11 state is absent", m.state(), "absent");
     check("X11 hidden launch stays hidden", shown, 0);
   }
 
@@ -249,19 +245,23 @@ async function partA() {
 }
 
 // ---------------------------------------------------------------- part B
-// The upstream shapes the patch targets, copied from the 2.7032.0 bundle
-// (index.chunk-*.js, main window creation `tXi`). Identifiers are upstream's;
-// the patch captures them by wildcard. Upstream code between the sites is
-// trimmed, but the three sites are verbatim:
-//   1. `show:i&&!u,backgroundColor:` in the BrowserWindow options
-//   2. `JEi(d,{showMainWindow:Eq})` right after the deferred-show setup
-//   3. the close handler's "tray is disabled" branch
+// The upstream shapes the patch targets, copied from the 2.26454.0 bundle
+// (index.chunk-*.js, main window creation `ULa`, tray-host check `Yfr`).
+// Identifiers are upstream's; the patch captures them by wildcard. Upstream
+// code between the sites is trimmed, but the three sites are verbatim:
+//   1. `show:i&&!0,backgroundColor:` in the BrowserWindow options
+//   2. `_ma(l,{showMainWindow:ZJ})` right after the deferred-show setup
+//   3. the close handler's "tray is disabled" branch (read-only anchor for
+//      the settings reader) followed by upstream's own no-tray-host quit
+// `__yfr` stands in for upstream's own tray-host verdict (Yfr).
 const FIXTURE = `"use strict";
-var ko;function Vb(k){return __cfg[k]}function HA(){return!1}function VA(){__ev.push("quit")}function cUr(){}function iI(){return"#000"}var P={info:s=>__ev.push("info:"+s)};
-function yxe(e){return ko=__makeWin(e),ko}function Lo(){__ev.push("Lo")}function JEi(d,o){}function vxe(){}
-function Eq(){let e=ko;!e||e.isDestroyed()||(e.isMinimized()?(e.restore(),e.focus()):e.isVisible()?e.focus():(Lo(),e.show()))}
-var tXi=e=>{let r=!1,i=(__notStartup()||!1)&&!r;let u=!1,d=yxe({x:e.x,y:e.y,width:e.width,height:e.height,minWidth:600,minHeight:400,titleBarStyle:"hidden",titleBarOverlay:!0,show:i&&!u,backgroundColor:iI(),opacity:1});let p=()=>{},m=!1;i?p():m=!0,u&&(d.show()),m&&vxe(d,(()=>{m=!1,p()})),JEi(d,{showMainWindow:Eq});d.on("close",(e=>{if(HA())return;if(!Vb("menuBarEnabled")){P.info("Quitting app on main window close since tray is disabled"),VA();return}e.preventDefault();let t=()=>{cUr(),d.hide()};d.isFullScreen()?(d.once("leave-full-screen",t),d.setFullScreen(!1)):t()}))};
+var ko;function $v(k){return __cfg[k]}function $A(){return!1}function QA(){__ev.push("quit")}function eqr(){__ev.push("quit-no-tray")}function ibi(){}function A8(){}function HF(){return"#000"}var P={info:s=>__ev.push("info:"+s)};
+async function Yfr(){return __yfr}
+function hCe(e){return ko=__makeWin(e),ko}function Lo(){__ev.push("Lo")}function _ma(l,o){}function mCe(){}
+function ZJ(){let e=ko;!e||e.isDestroyed()||(e.isMinimized()?(e.restore(),e.focus()):e.isVisible()?e.focus():(Lo(),e.show()))}
+var ULa=e=>{let r=!1,i=(__notStartup()||!1)&&!r;let l=hCe({x:e.x,y:e.y,width:e.width,height:e.height,minWidth:600,minHeight:400,titleBarStyle:"hidden",titleBarOverlay:!0,show:i&&!0,backgroundColor:HF(),opacity:1});let d=()=>{},f=!1;i?d():f=!0,f&&mCe(l,(()=>{f=!1,d()})),_ma(l,{showMainWindow:ZJ});l.on("close",(e=>{if($A())return;if(!$v("menuBarEnabled")){P.info("Quitting app on main window close since tray is disabled"),QA();return}e.preventDefault();let t=()=>{ibi(),A8(l,!0),l.hide()},n=()=>{l.isFullScreen()?(l.once("leave-full-screen",t),l.setFullScreen(!1)):t()};Yfr().then((e=>{l.isDestroyed()||(e.status==="unsupported"?(P.info("Quitting app on main window close since this desktop shows no tray icon"),eqr()):n())}))}))};
 `;
+const CLOSE_SITE = FIXTURE.slice(FIXTURE.indexOf('l.on("close"'));
 
 function runPatch(file) {
   try {
@@ -298,7 +298,7 @@ function makeWin(opts, ev) {
   return w;
 }
 
-async function drive(src, { bus, env, startup, menuBarEnabled = true }) {
+async function drive(src, { bus, env, startup, menuBarEnabled = true, trayHost = "supported" }) {
   const ctx = makeEnv({ bus, env });
   const ev = [];
   const sandbox = {
@@ -306,18 +306,20 @@ async function drive(src, { bus, env, startup, menuBarEnabled = true }) {
     process: ctx.process,
     __cdbDiag: (s) => ctx.diag.push(s),
     __cfg: { menuBarEnabled },
+    __yfr: { status: trayHost },
     __ev: ev,
     __notStartup: () => !startup,
     __makeWin: (o) => makeWin(o, ev),
     setTimeout,
     console,
   };
-  vm.runInNewContext(src + "\n;tXi({x:0,y:0,width:800,height:600});", vm.createContext(sandbox));
+  vm.runInNewContext(src + "\n;ULa({x:0,y:0,width:800,height:600});", vm.createContext(sandbox));
   await tick();
   const win = sandbox.ko;
   const shownAfterLaunch = win.visible;
   win.visible = true;
   win.close();
+  await tick();
   return { ev, shownAfterLaunch, diag: ctx.diag };
 }
 
@@ -340,42 +342,70 @@ async function partB() {
     check("second run exits 0", r2.status, 0);
     check("second run leaves the file byte-identical", readFileSync(file, "utf8"), patched);
 
-    section("[B2] half-patched input fails loud");
+    section("[B2] only the startup hook is injected; upstream close is untouched");
+    check("patched output keeps upstream's close handler verbatim", patched.includes(CLOSE_SITE), true);
+    check("no old close-handler injection (quitOnClose)", patched.includes("quitOnClose"), false);
+    check("no old close-handler injection (||marker)", patched.includes("||/*__cdb_tray_host_v1__*/"), false);
+    check("exactly one injection marker", patched.split("/*__cdb_tray_host_v1__*/").length - 1, 1);
+
+    section("[B3] broken inputs fail loud");
     {
-      const half = join(scratch, "half.js");
-      const closeOnly = patched.replace(
-        /(showMainWindow:Eq\}\))[\s\S]*?(;d\.on\("close")/,
-        "$1$2"
+      const dup = join(scratch, "dup.js");
+      const reg = "{showMainWindow:ZJ})";
+      const hs = patched.indexOf(reg) + reg.length;
+      const tail = '("menuBarEnabled"))';
+      const he = patched.indexOf(tail, hs) + tail.length;
+      const hook = patched.slice(hs, he);
+      check("hook found in patched output", hook.startsWith(",/*__cdb_tray_host_v1__*/("), true);
+      writeFileSync(dup, patched.replace(reg, reg + hook));
+      check("duplicated hook -> exit 1", runPatch(dup).status, 1);
+    }
+    {
+      const stale = join(scratch, "stale.js");
+      writeFileSync(
+        stale,
+        patched.replace(
+          'if(!$v("menuBarEnabled"))',
+          'if(!$v("menuBarEnabled")||/*__cdb_tray_host_v1__*/globalThis.__cdbTrayHost?.quitOnClose?.()===true)'
+        )
       );
-      check("fixture for the half-patched case differs", closeOnly !== patched, true);
-      writeFileSync(half, closeOnly);
-      check("close patched, startup not -> exit 1", runPatch(half).status, 1);
+      check("stray marker (old close injection) -> exit 1", runPatch(stale).status, 1);
     }
     {
       const moved = join(scratch, "moved.js");
       writeFileSync(moved, FIXTURE.replace("tray is disabled", "tray is off"));
-      check("anchor gone -> exit 1", runPatch(moved).status, 1);
+      check("settings-reader anchor gone -> exit 1", runPatch(moved).status, 1);
+    }
+    {
+      const moved = join(scratch, "moved2.js");
+      writeFileSync(moved, FIXTURE.replace("{showMainWindow:ZJ}", "{showMain:ZJ}"));
+      check("showMainWindow anchor gone -> exit 1", runPatch(moved).status, 1);
     }
 
-    section("[B3] patched close handler + window creation, Wayland WITHOUT a watcher");
+    section("[B4] Wayland WITHOUT a watcher (upstream Yfr: unsupported)");
     {
-      const r = await drive(patched, { bus: { busctl: "false" }, env: WAYLAND, startup: true });
+      const r = await drive(patched, {
+        bus: { busctl: "false" },
+        env: WAYLAND,
+        startup: true,
+        trayHost: "unsupported",
+      });
       check("--startup launch ends up visible", r.shownAfterLaunch, true);
       check("shown through upstream's showMainWindow (Lo then show)", r.ev.slice(0, 2).join(","), "Lo,show");
-      check("close quits", r.ev.includes("quit"), true);
+      check("close quits via upstream's no-tray-host branch", r.ev.includes("quit-no-tray"), true);
       check("close is not turned into a hide", r.ev.includes("hide"), false);
     }
 
-    section("[B4] patched close handler + window creation, Wayland WITH a watcher");
+    section("[B5] Wayland WITH a watcher");
     {
       const r = await drive(patched, { bus: { busctl: "true" }, env: WAYLAND, startup: true });
       check("--startup launch stays hidden (upstream)", r.shownAfterLaunch, false);
       check("close hides (upstream)", r.ev.includes("hide"), true);
-      check("close does not quit", r.ev.includes("quit"), false);
+      check("close does not quit", r.ev.some((e) => e.startsWith("quit")), false);
       check("close is prevented (upstream)", r.ev.includes("close-prevented"), true);
     }
 
-    section("[B5] tray disabled in settings: upstream quit branch untouched");
+    section("[B6] tray disabled in settings: upstream quit branch untouched");
     {
       const r = await drive(patched, {
         bus: { busctl: "true" },
@@ -387,11 +417,15 @@ async function partB() {
       check("close quits via upstream's branch", r.ev.includes("quit"), true);
     }
 
-    section("[B6] the unpatched upstream shape really has the defect");
+    section("[B7] the unpatched upstream shape really has the defect");
     {
-      const r = await drive(FIXTURE, { bus: { busctl: "false" }, env: WAYLAND, startup: true });
+      const r = await drive(FIXTURE, {
+        bus: { busctl: "false" },
+        env: WAYLAND,
+        startup: true,
+        trayHost: "unsupported",
+      });
       check("upstream: --startup stays hidden with no tray host", r.shownAfterLaunch, false);
-      check("upstream: close hides into the missing tray", r.ev.includes("hide"), true);
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });

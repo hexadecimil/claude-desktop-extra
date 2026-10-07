@@ -43,7 +43,7 @@ curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install-pacman.sh 
 sudo pacman -Syu claude-desktop-extra
 ```
 
-**Optional deps** (not installed automatically): QEMU/KVM for Cowork ([setup](docs/cowork.md)), `nodejs` (system MCP servers), `gjs` (GNOME search provider), `claude-code`.
+**Optional deps** (not installed automatically): QEMU/KVM for Cowork ([setup](docs/cowork.md)), `bubblewrap` + `socat` (Claude Code shell sandbox), `nodejs` (system MCP servers), `gjs` (GNOME search provider), `claude-code`.
 
 <details>
 <summary>Manual <code>pacman.conf</code> setup (without the install script)</summary>
@@ -131,7 +131,7 @@ wget https://github.com/patrickjaja/claude-desktop-extra/releases/latest/downloa
 chmod +x Claude_Desktop-*-x86_64.AppImage && ./Claude_Desktop-*-x86_64.AppImage
 ```
 
-Delta updates: `appimageupdatetool Claude_Desktop-*.AppImage`. Works with AppImageLauncher and Gear Lever. Needs the host's PipeWire client library (`libpipewire-0.3.so.0`, present on every desktop with PipeWire). For Cowork, install QEMU + UEFI firmware + virtiofsd from your distro ([Cowork setup](docs/cowork.md)).
+Delta updates: `appimageupdatetool Claude_Desktop-*.AppImage`. Works with AppImageLauncher and Gear Lever. Needs the host's PipeWire client library (`libpipewire-0.3.so.0`, present on every desktop with PipeWire). For Cowork, install QEMU + UEFI firmware + virtiofsd from your distro ([Cowork setup](docs/cowork.md)); for the Claude Code shell sandbox, `bubblewrap` and `socat`. First launch also registers `.mcpb`/`.dxt` extensions and `.skill` files for your user.
 </details>
 
 <a name="from-source"></a>

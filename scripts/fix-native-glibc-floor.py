@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Keep upstream's claude-native-binding.node loadable on the glibc 2.34 floor.
 
-Since v2.19675.1 the binding references `pidfd_spawnp` / `pidfd_getpid`
-(GLIBC_2.39). Both are weak undefined symbols, so the code already copes with
-them being absent, but the matching libc.so.6 version-need entry carries no
+v2.19675.1's binding referenced `pidfd_spawnp` / `pidfd_getpid`
+(GLIBC_2.39); v2.26454.0's tops out at GLIBC_2.34 and passes through
+unchanged, so this stays as a guard for the next release that raises it.
+Those were weak undefined symbols, so the code already coped with them
+being absent, but the matching libc.so.6 version-need entry carries no
 flags, and ld.so refuses the whole file when libc lacks that version
 (`version 'GLIBC_2.39' not found`) - RHEL 9, Ubuntu 22.04 and Debian 12. The
 binding then fails to load and every safe-fs operation throws.

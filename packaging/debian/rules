@@ -27,6 +27,10 @@ override_dh_auto_install:
 	install -d debian/claude-desktop/usr/share/icons
 	cp -a icons/hicolor debian/claude-desktop/usr/share/icons/
 
+	# Shared MIME types (.mcpb/.dxt, .skill) from the verbatim upstream tree
+	install -Dm644 claude-desktop/resources/linux-mime/com.anthropic.Claude.xml \
+		debian/claude-desktop/usr/share/mime/packages/com.anthropic.Claude.xml
+
 override_dh_strip:
 	# Don't strip - Electron binaries don't like it
 

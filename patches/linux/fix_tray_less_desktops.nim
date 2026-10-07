@@ -1,52 +1,43 @@
 # @patch-target: app.asar.contents/.vite/build/index.js
 # @patch-type: nim
 #
-# Tray-less desktops: close-to-tray and hidden launches need a tray host.
+# Tray-less desktops: a hidden (--startup) launch needs a tray host.
 #
-# Upstream (2.7032.0, main window creation in an index chunk) does two things
-# that assume a clickable tray icon, and never checks that a tray host exists:
+# Upstream creates the main window with `show:i&&...` where i is false for a
+# `--startup` launch (upstream's own XDG autostart entry passes --startup), so
+# the window is born hidden and only the tray icon can bring it back. Nothing
+# shows it when no tray icon exists: on a Wayland session without an
+# org.kde.StatusNotifierWatcher (vanilla GNOME without the AppIndicator
+# extension, sway/niri without a tray-capable bar), or with the tray switched
+# off in settings, an autostart launch is an invisible process.
 #
-#   - close handler: `if(!Vb("menuBarEnabled")){P.info("Quitting app on main
-#     window close since tray is disabled"),VA();return}e.preventDefault();
-#     ... d.hide()`. The setting defaults to true, so close = hide.
-#   - window creation: `show:i&&!u` where i is false for a `--startup` launch
-#     (upstream's own XDG autostart entry passes --startup), so the window is
-#     born hidden.
-#
-# The bundle has no StatusNotifierWatcher / AppIndicator / tray-host probe at
-# all. Electron's Linux Tray registers a StatusNotifierItem over D-Bus and, when
-# no org.kde.StatusNotifierWatcher owns its name, falls back to a GtkStatusIcon
-# (XEmbed, X11 only). On a Wayland session without a watcher (vanilla GNOME
-# without the AppIndicator extension, sway/niri without a tray-capable bar)
-# neither can show anything, so closing the window leaves an invisible process
-# and an autostart launch shows nothing.
+# Closing the main window on a desktop without a tray host is handled by
+# upstream itself (its close handler quits when no tray icon is shown).
 #
 # We inject js/tray_host_probe.js (async NameHasOwner probe, cached, via
-# busctl -> dbus-send -> gdbus from PATH) at two sites:
+# busctl -> dbus-send -> gdbus from PATH) right after upstream registers
+# showMainWindow for the new window:
+#     ,(<probe>).startup(i,<showMainWindow>,()=><settings>("menuBarEnabled"))
+# which, when the window was born hidden and there is no tray to reach it from
+# (no watcher on Wayland, or the tray switched off in settings), calls
+# upstream's own showMainWindow. With a watcher on the bus, with the probe
+# still pending or unable to answer, and on X11 (XEmbed trays are invisible to
+# the bus), upstream behavior is unchanged.
 #
-#   A  close handler: widen upstream's own no-tray quit branch to
-#        if(!Vb("menuBarEnabled")||globalThis.__cdbTrayHost?.quitOnClose?.()===true)
-#      Quitting is upstream's OWN semantics for "no tray" on Linux (that exact
-#      branch and log line), so we reuse it rather than invent a minimize.
-#   B  right after upstream registers showMainWindow for the new window:
-#        ,(<probe>).startup(i,Eq,()=>Vb("menuBarEnabled"))
-#      which, when the window was born hidden and there is no tray to reach it
-#      from (no watcher on Wayland, or the tray switched off in settings),
-#      calls upstream's own showMainWindow.
+# The settings reader name is read (not modified) from upstream's close
+# handler `if(!<settings>("menuBarEnabled")){...tray is disabled...}`, which
+# also pins that all sites sit in the same window-creation function.
 #
-# With a watcher on the bus, with the probe still pending or unable to answer,
-# and on X11 (XEmbed trays are invisible to the bus), upstream behavior is
-# unchanged.
-#
-# Idempotency: both injected shapes present -> already applied (2/2). Exactly
-# one present -> partially patched input -> FAIL.
+# Idempotency: the injected startup hook present exactly once, and it is the
+# only marker in the input -> already applied (1/1). Any other marker state
+# (duplicated hook, a stray marker) -> FAIL.
 
 import std/[os, strformat, strutils]
 import regex
 
 const PROBE_SRC = staticRead("../../js/tray_host_probe.js")
 const MARKER = "/*__cdb_tray_host_v1__*/"
-const EXPECTED_PATCHES = 2
+const EXPECTED_PATCHES = 1
 
 # The probe file is a bare expression behind one leading block comment; the
 # comment is documentation only and is not shipped into the bundle.
@@ -59,13 +50,9 @@ proc probeExpr(): string =
   if not result.startsWith("(() =>") or not result.endsWith(")()"):
     raise newException(ValueError, "tray_host_probe.js: not a bare IIFE expression")
 
-const CLOSE_INJ = "||" & MARKER & "globalThis.__cdbTrayHost?.quitOnClose?.()===true"
-
-let closeRe = re2(
-  """(if\(!([\w$]+)\(["`]menuBarEnabled["`]\))(\)\{[\w$]+\.info\(["`]Quitting app on main window close since tray is disabled["`]\))"""
-)
-let closeDoneRe = re2(
-  """if\(!([\w$]+)\(["`]menuBarEnabled["`]\)\|\|/\*__cdb_tray_host_v1__\*/globalThis\.__cdbTrayHost\?\.quitOnClose\?\.\(\)===true\)\{[\w$]+\.info\(["`]Quitting app on main window close since tray is disabled["`]\)"""
+# Read-only anchor: captures the settings reader, never rewritten.
+let settingRe = re2(
+  """if\(!([\w$]+)\(["`]menuBarEnabled["`]\)\)\{[\w$]+\.info\(["`]Quitting app on main window close since tray is disabled["`]\)"""
 )
 let showOptRe = re2"""show:([\w$]+)&&![\w$]+,backgroundColor:"""
 let showMainRe = re2"""[\w$]+\([\w$]+,\{showMainWindow:([\w$]+)\}\)"""
@@ -81,41 +68,36 @@ proc apply*(input: string): string =
   result = input
   var patchesApplied = 0
 
-  let closeDone = allMatches(input, closeDoneRe).len
   let startupDone = allMatches(input, startupDoneRe).len
-  if closeDone > 1 or startupDone > 1:
+  let markers = input.count(MARKER)
+  if startupDone > 1 or markers != startupDone:
     raise newException(
       ValueError,
-      &"fix_tray_less_desktops: injected shapes duplicated (close={closeDone}, startup={startupDone})",
+      &"fix_tray_less_desktops: unexpected injected state (hook={startupDone}, markers={markers}) - re-extract a pristine bundle",
     )
-  if closeDone == 1 and startupDone == 1:
-    echo "  [OK] A close handler: tray-host quit branch already present"
-    echo "  [OK] B window creation: hidden-launch show hook already present"
+  if startupDone == 1:
+    echo "  [OK] window creation: hidden-launch show hook already present"
     return input
-  if closeDone + startupDone == 1:
-    raise newException(
-      ValueError,
-      &"fix_tray_less_desktops: partially patched input (close={closeDone}, startup={startupDone}) - re-extract a pristine bundle",
-    )
 
-  # ── locate all three upstream sites on the pristine input ─────────────────
-  let closeMs = allMatches(input, closeRe)
-  if closeMs.len != 1:
-    echo &"  [FAIL] A close handler 'tray is disabled' branch: {closeMs.len} matches (want 1)"
-    raise newException(ValueError, "fix_tray_less_desktops: close anchor moved")
+  # ── locate the three upstream sites on the pristine input ─────────────────
   let showMs = allMatches(input, showOptRe)
   if showMs.len != 1:
-    echo &"  [FAIL] B main window `show:<gate>&&!<early>,backgroundColor:`: {showMs.len} matches (want 1)"
+    echo &"  [FAIL] main window `show:<gate>&&!<early>,backgroundColor:`: {showMs.len} matches (want 1)"
     raise newException(ValueError, "fix_tray_less_desktops: show-option anchor moved")
   let smMs = allMatches(input, showMainRe)
   if smMs.len != 1:
-    echo &"  [FAIL] B `{{showMainWindow:<fn>}}` registration: {smMs.len} matches (want 1)"
+    echo &"  [FAIL] `{{showMainWindow:<fn>}}` registration: {smMs.len} matches (want 1)"
     raise
       newException(ValueError, "fix_tray_less_desktops: showMainWindow anchor moved")
+  let stMs = allMatches(input, settingRe)
+  if stMs.len != 1:
+    echo &"  [FAIL] close handler 'tray is disabled' branch (settings reader): {stMs.len} matches (want 1)"
+    raise
+      newException(ValueError, "fix_tray_less_desktops: settings-reader anchor moved")
 
-  let cm = closeMs[0]
   let sm = showMs[0]
   let rm = smMs[0]
+  let cm = stMs[0]
   # All three must sit in the same main-window creation function: the show
   # gate first, the showMainWindow registration shortly after, the close
   # handler after that. The gate variable and the settings reader are only in
@@ -128,27 +110,20 @@ proc apply*(input: string): string =
 
   let gateVar = input[sm.group(0)]
   let showFn = input[rm.group(0)]
-  let settingFn = input[cm.group(1)]
-
-  # Apply the later site (A) first so the earlier offsets stay valid.
-  let aStart = cm.group(0).b + 1
-  result = result[0 ..< aStart] & CLOSE_INJ & result[aStart .. ^1]
-  echo &"  [OK] A close handler: quits when no tray host (setting reader {settingFn})"
-  inc patchesApplied
+  let settingFn = input[cm.group(0)]
 
   let bEnd = rm.boundaries.b + 1
   let hook =
     "," & MARKER & "(" & probeExpr() & ").startup(" & gateVar & "," & showFn & ",()=>" &
     settingFn & "(\"menuBarEnabled\"))"
   result = result[0 ..< bEnd] & hook & result[bEnd .. ^1]
-  echo &"  [OK] B window creation: hidden launch shown when no tray (gate {gateVar}, show {showFn})"
+  echo &"  [OK] window creation: hidden launch shown when no tray (gate {gateVar}, show {showFn}, settings {settingFn})"
   inc patchesApplied
 
-  # Positive end-state: both injected shapes are now present exactly once.
-  let cOut = allMatches(result, closeDoneRe).len
+  # Positive end-state: the injected hook is now present exactly once.
   let sOut = allMatches(result, startupDoneRe).len
-  if cOut != 1 or sOut != 1:
-    echo &"  [FAIL] injected shapes in output: close={cOut}, startup={sOut} (want 1 each)"
+  if sOut != 1:
+    echo &"  [FAIL] injected startup hook in output: {sOut} (want 1)"
     raise newException(ValueError, "fix_tray_less_desktops: end-state assertion failed")
 
   if patchesApplied < EXPECTED_PATCHES:

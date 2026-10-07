@@ -51,7 +51,10 @@
 , qemu ? null           # provides qemu-system-x86_64 for the Cowork VM
 , virtiofsd ? null      # system virtiofsd (bundled one is Ubuntu-22-only)
 , OVMF ? null           # UEFI firmware; OVMF.fd output must ship CODE+VARS pair
-, socat ? null          # faster Quick Entry toggle (~2ms vs ~25ms python3)
+, socat ? null          # Claude Code shell sandbox (with bubblewrap); faster Quick Entry toggle
+# Claude Code shell sandbox (organization sandbox policy). bwrap from the store
+# is not setuid, so it relies on unprivileged user namespaces (NixOS default).
+, bubblewrap ? null
 , nodejs ? null         # third-party MCP servers
 # Extra PATH entries for binaries not packaged in Nix (e.g. npm global, nvm)
 , extraSessionPaths ? []
@@ -201,7 +204,7 @@ stdenvNoCC.mkDerivation {
       exec = "claude-desktop %U";
       icon = "claude-desktop";
       categories = [ "Utility" "Development" ];
-      mimeTypes = [ "x-scheme-handler/claude" ];
+      mimeTypes = [ "x-scheme-handler/claude" "application/vnd.anthropic.mcpb" "application/vnd.anthropic.skill" ];
       startupNotify = true;
       startupWMClass = "com.anthropic.Claude";
       terminal = false;
@@ -268,6 +271,7 @@ stdenvNoCC.mkDerivation {
       --set ELECTRON_USE_SYSTEM_TITLE_BAR "1" \
       ${lib.optionalString (imagemagick != null) "--prefix PATH : ${imagemagick}/bin"} \
       ${lib.optionalString (socat != null) "--prefix PATH : ${socat}/bin"} \
+      ${lib.optionalString (bubblewrap != null) "--prefix PATH : ${bubblewrap}/bin"} \
       ${lib.optionalString (ydotool != null) "--prefix PATH : ${ydotool}/bin"} \
       ${lib.optionalString (spectacle != null) "--prefix PATH : ${spectacle}/bin"} \
       ${lib.optionalString (gnome-portal-bridge != null) "--set-default GNOME_PORTAL_BRIDGE_BIN ${gnome-portal-bridge}/bin/gnome-portal-bridge"} \
@@ -301,6 +305,15 @@ stdenvNoCC.mkDerivation {
       substituteInPlace $out/share/dbus-1/services/com.anthropic.Claude.SearchProvider.service \
         --replace-fail "Exec=/usr/bin/gjs -m /usr/lib/claude-desktop/" "Exec=${gjs}/bin/gjs -m $out/lib/claude-desktop/"
     ''}
+
+    # Shared MIME types (.mcpb/.dxt extensions, .skill). NixOS (xdg.mime)
+    # rebuilds the MIME database from share/mime/packages of the system
+    # profile, so environment.systemPackages picks it up. Guarded:
+    # release tarballs before upstream 2.26454.0 do not ship the file.
+    if [ -f $out/lib/claude-desktop/resources/linux-mime/com.anthropic.Claude.xml ]; then
+      install -Dm644 $out/lib/claude-desktop/resources/linux-mime/com.anthropic.Claude.xml \
+        $out/share/mime/packages/com.anthropic.Claude.xml
+    fi
 
     # Upstream license notice (tarball root, from the official .deb's
     # usr/share/doc). Guarded: pre-2026-07 release tarballs lack it, and the

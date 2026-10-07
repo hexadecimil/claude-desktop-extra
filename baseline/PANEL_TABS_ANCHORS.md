@@ -14,6 +14,15 @@ desktop-side preconditions the feature has are the `mainView.js` preload that ca
 `cdbTabs` bridge (a CommonJS bundle that `require("electron")` and opens with a
 `"use strict";` prologue) and the `/epitaxy` route in the main bundle.
 
+**Desktop-side preconditions re-verified statically on v2.26454.0 (2026-10-07):** the remote
+anchors above still have zero occurrences in the extracted `app.asar`; `.vite/build/mainView.js` still
+opens with `"use strict";` and contains one `require("electron")`; the main bundle still routes
+`"/epitaxy"` (4) and `"/epitaxy/"` (1). The DOM/fiber anchors themselves were not re-measured live -
+the claude.ai-web.log check below remains the release check for 1P. NB the 3P Code tab renders from the
+LOCAL `resources/ion-dist` SPA, which on v2.26454.0 carries `tiles-shell` (5), `"data-pane-root":""` (4),
+`elevation:"panel"` (11), `epitaxy-pane-close-control` (5) and `epitaxy.sidePaneStore.v1`, so a 3P-mode
+anchor can be grepped there.
+
 Everything else the panel-tabs feature reaches into remote claude.ai markup or its React
 fiber. Re-validate this list on every upstream bump: a green build proves the Nim
 patterns still matched the bundle, **not** that these DOM/fiber anchors still exist -

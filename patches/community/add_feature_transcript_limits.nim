@@ -26,8 +26,8 @@
 #      main's live env - see below
 #   P. precondition (asserted, not applied): upstream still READS `loadLimits` -
 #      see below
-#   C. `new <Manager>({onTranscriptTruncatedChanged:` ->
-#      `new <Manager>({loadLimits:globalThis.__cdbTranscriptLimits?.(),onTranscriptTruncatedChanged:`
+#   C. `new <Manager>({[k:v,...]onTranscriptTruncatedChanged:` ->
+#      `new <Manager>({loadLimits:globalThis.__cdbTranscriptLimits?.(),[k:v,...]onTranscriptTruncatedChanged:`
 #      at BOTH construction sites (the session manager, and the sidebar's
 #      lightweight reader, whose truncation callback is a no-op).
 #
@@ -81,10 +81,16 @@ let forkEndStateRe =
 let limitsCtorReadRe = re2"""new [\w$.]+\([\w$]+\.loadLimits\)"""
 let limitsConfigReadRe = re2"""this\.config\.loadLimits\b"""
 
-# Sub-patch C. Group 0 = `new <id>.<id>({`.
-let ctorRe = re2"""(new [\w$.]+\(\{)onTranscriptTruncatedChanged:"""
+# Sub-patch C. Group 0 = `new <id>.<id>({`, group 1 = zero or more simple
+# `key:value,` properties upstream places before the callback. Matches (v2.26454.0):
+#   this.diskTranscript=new fe.t({resolvesByKind:HF,onTranscriptTruncatedChanged:e=>{...
+#   this.transcriptReader=new n.t({onTranscriptTruncatedChanged:()=>{},skipMtimeTouchOnRead:!0})
+# (v2.19675.1 had no leading property on the first site.) `loadLimits:` goes right
+# after `({`, ahead of any such property.
+let ctorRe =
+  re2"""(new [\w$.]+\(\{)((?:[\w$]+:[\w$.!]+,)*)onTranscriptTruncatedChanged:"""
 let ctorEndRe =
-  re2"""new [\w$.]+\(\{loadLimits:globalThis\.__cdbTranscriptLimits\?\.\(\),onTranscriptTruncatedChanged:"""
+  re2"""new [\w$.]+\(\{loadLimits:globalThis\.__cdbTranscriptLimits\?\.\(\),(?:[\w$]+:[\w$.!]+,)*onTranscriptTruncatedChanged:"""
 
 proc forkEndStateCount(s: string): int =
   s.findAll(forkEndStateRe).len
@@ -153,8 +159,8 @@ proc apply*(input: string): string =
       ctorRe,
       proc(m: RegexMatch2, s: string): string =
         inc count
-        s[m.group(0)] &
-          "loadLimits:globalThis.__cdbTranscriptLimits?.(),onTranscriptTruncatedChanged:",
+        s[m.group(0)] & "loadLimits:globalThis.__cdbTranscriptLimits?.()," &
+          s[m.group(1)] & "onTranscriptTruncatedChanged:",
     )
     if count != CTOR_SITES:
       echo "  [FAIL] transcript limits: expected exactly " & $CTOR_SITES &

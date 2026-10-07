@@ -801,6 +801,18 @@ _refresh_profile_binary_if_stale() {
 # ---------------------------------------------------------------------------
 _APPIMAGE_DESKTOP_FILE="$HOME/.local/share/applications/${DESKTOP_ID}.desktop"
 _APPIMAGE_ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+# Shared MIME types for .mcpb/.dxt (extensions) and .skill, shipped by upstream
+# under resources/linux-mime/. Packages install it to /usr/share/mime/packages;
+# the AppImage registers it per user.
+_APPIMAGE_MIME_DIR="$HOME/.local/share/mime"
+_APPIMAGE_MIME_XML="$_APPIMAGE_MIME_DIR/packages/com.anthropic.Claude.xml"
+_APPIMAGE_MIME_LINE="MimeType=x-scheme-handler/claude;application/vnd.anthropic.mcpb;application/vnd.anthropic.skill;"
+
+# True when the per-user MIME XML already matches the AppImage's copy (pure
+# bash, so a host without diffutils does not rewrite it on every launch).
+_appimage_mime_current() {
+    [[ -f "$_APPIMAGE_MIME_XML" ]] && [[ "$(<"$1")" == "$(<"$_APPIMAGE_MIME_XML")" ]]
+}
 
 _appimage_integrate() {
     local appimage_path="${CLAUDE_APPIMAGE_PATH:-}"
@@ -833,10 +845,25 @@ _appimage_integrate() {
 
     local desired_exec="Exec=${appimage_path} %u"
 
+    # $ELECTRON_BIN (<AppDir>/usr/lib/claude-desktop/claude) locates the icon.
+    # Never expand $CLAUDE_ELECTRON bare: it is the raw env var, unset unless
+    # the AppImage AppRun exported it, and a bare expansion of an unset name is
+    # fatal under `set -u` - which aborted --integrate after the .desktop was
+    # written but before the claude:// handler was registered.
+    local here="${ELECTRON_BIN%/*}"
+    # The MIME XML comes from the AppImage's own resources/ (AppRun exports
+    # CLAUDE_ELECTRON), since a named profile points ELECTRON_BIN at its
+    # per-profile copy outside the AppImage.
+    local mime_tree="${CLAUDE_ELECTRON:-${ELECTRON_BIN:-}}"
+    local mime_src="${mime_tree%/*}/resources/linux-mime/com.anthropic.Claude.xml"
+    [[ -n "$mime_tree" && -f "$mime_src" ]] || mime_src=""
+
     if [[ -f "$_APPIMAGE_DESKTOP_FILE" ]]; then
-        local current_exec
+        local current_exec current_mime
         current_exec=$(grep '^Exec=' "$_APPIMAGE_DESKTOP_FILE" 2>/dev/null | head -1)
-        if [[ "$current_exec" == "$desired_exec" ]]; then
+        current_mime=$(grep '^MimeType=' "$_APPIMAGE_DESKTOP_FILE" 2>/dev/null | head -1)
+        if [[ "$current_exec" == "$desired_exec" && "$current_mime" == "$_APPIMAGE_MIME_LINE" ]] \
+            && { [[ -z "$mime_src" ]] || _appimage_mime_current "$mime_src"; }; then
             log "AppImage integrate: .desktop up to date ($appimage_path)"
             if [[ "$quiet" != "quiet" ]]; then
                 echo "Desktop integration already up to date."
@@ -845,7 +872,7 @@ _appimage_integrate() {
             fi
             return 0
         fi
-        log "AppImage integrate: updating .desktop (path changed)"
+        log "AppImage integrate: updating .desktop (path or MIME types changed)"
     fi
 
     mkdir -p "$(dirname "$_APPIMAGE_DESKTOP_FILE")"
@@ -868,7 +895,7 @@ StartupNotify=true
 StartupWMClass=com.anthropic.Claude
 SingleMainWindow=true
 Categories=Utility;Development;
-MimeType=x-scheme-handler/claude;
+${_APPIMAGE_MIME_LINE}
 Actions=NewChat;NewCode;
 
 [Desktop Action NewChat]
@@ -881,11 +908,6 @@ Exec=${appimage_path} claude://code/new
 DESKTOP_EOF
 
     local appimage_icon=""
-    # $ELECTRON_BIN, not $CLAUDE_ELECTRON: the latter is the raw env var, which
-    # is unset unless the AppImage AppRun exported it, and a bare expansion of an
-    # unset name is fatal under `set -u` - which aborted --integrate after the
-    # .desktop was written but before the claude:// handler was registered.
-    local here="${ELECTRON_BIN%/*}"
     if [[ -n "$here" ]]; then
         local appdir="${here}/../../.."
         if [[ -f "$appdir/claude-desktop.png" ]]; then
@@ -897,6 +919,17 @@ DESKTOP_EOF
     if [[ -n "$appimage_icon" && -f "$appimage_icon" ]]; then
         mkdir -p "$_APPIMAGE_ICON_DIR"
         cp "$appimage_icon" "$_APPIMAGE_ICON_DIR/claude-desktop.png" 2>/dev/null || true
+    fi
+
+    # Best-effort: without update-mime-database the file types simply stay
+    # unrecognised; the claude:// handler does not depend on it.
+    if [[ -n "$mime_src" ]] && ! _appimage_mime_current "$mime_src"; then
+        if mkdir -p "${_APPIMAGE_MIME_XML%/*}" 2>/dev/null \
+            && cp "$mime_src" "$_APPIMAGE_MIME_XML" 2>/dev/null; then
+            if command -v update-mime-database &>/dev/null; then
+                update-mime-database "$_APPIMAGE_MIME_DIR" 2>/dev/null || true
+            fi
+        fi
     fi
 
     if command -v update-desktop-database &>/dev/null; then
@@ -942,6 +975,15 @@ _appimage_unintegrate() {
         rm -f "$icon_file"
         echo "Removed: $icon_file"
         removed=$((removed + 1))
+    fi
+
+    if [[ -f "$_APPIMAGE_MIME_XML" ]]; then
+        rm -f "$_APPIMAGE_MIME_XML"
+        echo "Removed: $_APPIMAGE_MIME_XML"
+        removed=$((removed + 1))
+        if command -v update-mime-database &>/dev/null; then
+            update-mime-database "$_APPIMAGE_MIME_DIR" 2>/dev/null || true
+        fi
     fi
 
     if (( removed == 0 )); then

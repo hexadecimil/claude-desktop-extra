@@ -339,7 +339,7 @@
     };
   }
 
-  // The managed-config key catalog of Claude Desktop v2.19675.1 (176 keys), read out of the
+  // The managed-config key catalog of Claude Desktop v2.26454.0 (179 keys), read out of the
   // bundle's own schema (flat key, zod leaf type, scopes, title). Upstream drives
   // its 3P Setup wizard from that schema; we cannot reach it from here (it is
   // module-scoped in index.pre.js), so this is a PINNED COPY and is therefore
@@ -630,6 +630,9 @@
       label: "Require the full VM sandbox" },
     { key: "secureVmFeaturesEnabled", kind: "bool", group: "sandbox", scope: "1p",
       label: "Secure VM features" },
+    { key: "quickWriteEnabled", kind: "bool", group: "sandbox", scope: "1p",
+      label: "Allow Quick Write",
+      note: "Off on a managed computer until set to true (upstream gates this @next)." },
     { key: "blockReadsOutsideWorkingDirectories", kind: "bool", group: "sandbox", scope: "both",
       label: "Block reads outside working directories",
       note: "File tools refuse reads outside a Code session's working directories and sandboxed shell commands lose the home directory (upstream gates this @next)." },
@@ -703,8 +706,14 @@
       label: "Show the extension directory" },
     { key: "microsoftAuthBroker", kind: "enum", group: "connectors", scope: "3p",
       label: "Microsoft 365 sign-in broker", options: ["auto", "disabled"] },
+    { key: "microsoftAuthDefaultAccount", kind: "enum", group: "connectors", scope: "3p",
+      label: "Microsoft 365 sign-in with the Windows account", options: ["enabled", "disabled"],
+      note: "Windows-only upstream (silent sign-in with the account signed in to Windows); no effect on Linux (upstream gates this @next)." },
     { key: "hardwareBuddyEnabled", kind: "bool", group: "connectors", scope: "1p",
       label: "Allow Hardware Buddy devices", dflt: true },
+    { key: "disableConnectorSignInInApp", kind: "bool", group: "connectors", scope: "1p",
+      label: "Keep connector sign-in in the browser",
+      note: "A claude.ai connector (remote MCP) OAuth sign-in completes in the system browser instead of the app finishing it from a claude:// link; applies from the next launch (upstream gates this @next)." },
 
     // --- plugins ------------------------------------------------------------
     { key: "organizationPluginsUrl", kind: "text", group: "plugins", scope: "3p",

@@ -10,7 +10,7 @@ The official `.deb` (apt repo `https://downloads.claude.ai/claude-desktop/apt`) 
 
 - **Target platform:** Linux only (X11, Wayland, XWayland). No macOS/Windows code.
 - **Architectures:** x86_64 (primary) and aarch64.
-- **glibc floor:** 2.34 (RHEL 9 / Ubuntu 22.04). Debian 11 is not supported. Upstream's `claude-native-binding.node` (since v2.19675.1) needs GLIBC_2.39 only for weak symbols; `scripts/fix-native-glibc-floor.py` marks those version-needs weak at build time and CI asserts it.
+- **glibc floor:** 2.34 (RHEL 9 / Ubuntu 22.04). Debian 11 is not supported. If upstream's `claude-native-binding.node` asks for a glibc above 2.34 through weak symbols only (v2.19675.1 did, for GLIBC_2.39; v2.26454.0 tops out at 2.34), `scripts/fix-native-glibc-floor.py` marks those version-needs weak at build time; a strong symbol above the floor fails the build, and CI asserts the result.
 - **Native binaries we ship** (the four Computer Use bridges) build for x86_64 AND aarch64, each with a stated glibc floor or as static musl; CI verifies with `objdump -T | grep GLIBC_`. A new native binary picks the floor of its minimum viable distro.
 - **RPM caveat:** the spec excludes the bundled tree from rpm's automatic ELF dependency generator (`__requires_exclude_from` in `packaging/rpm/claude-desktop-extra.spec`); without it the bridges' glibc-2.39 symbols block install on RHEL 9. CI's rockylinux:9 install test guards this.
 
