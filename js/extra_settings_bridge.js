@@ -128,6 +128,17 @@
       return ipcRenderer.invoke("cdb-qopen:pref-set", enabled === true);
     },
 
+    // Allow non-Anthropic models through a third-party gateway. BOTH channels
+    // are owned by patches/community/add_feature_allow_non_anthropic_models.nim, not by the
+    // settings patch - the same cross-patch arrangement as quickOpenRead/Set.
+    // set() takes a plain boolean and the main side re-validates the type.
+    allowNonAnthropicModelsRead: function () {
+      return ipcRenderer.invoke("cdb-mb:pref-read");
+    },
+    allowNonAnthropicModelsSet: function (enabled) {
+      return ipcRenderer.invoke("cdb-mb:pref-set", enabled === true);
+    },
+
     // Load large sessions in full (transcript load limits). BOTH channels are
     // owned by patches/community/add_feature_transcript_limits.nim, not by the
     // settings patch - the same cross-patch arrangement as quickOpenRead/Set.

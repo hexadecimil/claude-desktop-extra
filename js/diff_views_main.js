@@ -2239,16 +2239,27 @@
   // hatch: we never set that flag, and a mode switch is not worth widening the
   // gate. Tightened from the previous generic /^https?:\/\// test, which would
   // have accepted any http(s) page that somehow got our preload.
+  //
+  // app://localhost is the main window in 3P mode (upstream serves the bundled
+  // SPA from it instead of claude.ai). Its URL.origin is the opaque "null", so
+  // the origin is normalised to protocol + "//" + host first - the same
+  // normalisation upstream's own eIPC sender validator applies. host keeps a
+  // port, so app://localhost:1234 stays distinct and is rejected.
   var ALLOWED_ORIGINS = [
     "https://claude.ai",
     "https://preview.claude.ai",
     "https://claude.com",
-    "https://preview.claude.com"
+    "https://preview.claude.com",
+    "app://localhost"
   ];
 
   function originAllowed(rawUrl) {
     var origin;
-    try { origin = new URL(String(rawUrl)).origin; } catch (e) { return false; }
+    try {
+      var u = new URL(String(rawUrl));
+      origin = u.origin;
+      if (!origin || origin === "null") origin = u.protocol + "//" + u.host;
+    } catch (e) { return false; }
     for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
       if (origin === ALLOWED_ORIGINS[i]) return true;
     }
@@ -2452,7 +2463,9 @@
     wc.on("dom-ready", function () {
       try {
         var url = wc.getURL() || "";
-        if (originAllowed(url)) {
+        // Upstream's 3P setup wizard also lives on app://localhost but has no
+        // Code tab, so it gets no injection.
+        if (originAllowed(url) && !/^app:\/\/localhost\/setup-desktop-3p(?:[\/?#]|$)/i.test(url)) {
           wc.executeJavaScript(PAGE_SRC).catch(function () {});
         }
       } catch (e) {}

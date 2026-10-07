@@ -47,6 +47,8 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { unescapeHtml } from "../lib/unescape-html.mjs";
+import vm from "node:vm";
+import Module from "node:module";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const EXPAND_JS = readFileSync(join(ROOT, "js/diff_views_expand.js"), "utf8");
@@ -903,6 +905,59 @@ ${run}
 </body></html>`;
 }
 
+// --- main-process sender guard (node only, no chromium needed) --------------
+// js/diff_views_main.js backs the Extra -> Diff views row through its own IPC
+// channels. The guard is exact-origin. 3P mode serves the SPA from
+// app://localhost, whose parsed origin is the opaque "null", so it has to be
+// normalised before the compare - and nothing near it may slip through. The
+// module runs in a vm with electron shimmed; URL is passed in because it is a
+// global in Electron's main process.
+let mainPass = 0;
+let mainFail = 0;
+{
+  const okm = (c, n) => { if (c) { mainPass++; console.log("  ok   " + n); }
+    else { mainFail++; console.error("  FAIL " + n); } };
+  const mdir = mkdtempSync(join(tmpdir(), "cdb-dv-main-"));
+  const handlers = {};
+  const appListeners = {};
+  const electron = {
+    app: { getPath: () => mdir, on: (ev, fn) => { (appListeners[ev] = appListeners[ev] || []).push(fn); },
+      whenReady: () => new Promise(() => {}) },
+    ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; }, removeHandler: () => {} }
+  };
+  const sb = { require: (m) => (m === "electron" ? electron : Module.createRequire(import.meta.url)(m)),
+    process: { platform: "linux", env: {} }, console, URL,
+    setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {} };
+  sb.globalThis = sb;
+  vm.runInNewContext(readFileSync(join(ROOT, "js/diff_views_main.js"), "utf8"), vm.createContext(sb));
+  const from = (u, parent = null) => ({ sender: { getURL: () => u, isDestroyed: () => false }, senderFrame: { parent } });
+  for (const ch of ["cdb-diff:pref-read", "cdb-diff:state"]) {
+    for (const u of ["https://claude.ai/x", "https://preview.claude.ai/x", "https://claude.com/",
+                     "https://preview.claude.com/x", "app://localhost/", "app://localhost/new?x=1"]) {
+      okm((await handlers[ch](from(u))).ok === true, "main: " + ch + " sender " + u + " accepted");
+    }
+    for (const u of ["https://evil.example/", "app://localhost.evil/", "app://localhost:1234/", "app://other/",
+                     "file:///home/u/x.html", "http://localhost:3000/", "http://claude.ai/", "not a url"]) {
+      const r = await handlers[ch](from(u));
+      okm(r.ok === false && /unrecognized sender/.test(r.error || ""), "main: " + ch + " sender " + u + " rejected");
+    }
+    okm((await handlers[ch](from("app://localhost/", {}))).ok === false,
+        "main: " + ch + " rejects an app://localhost subframe");
+  }
+  // The page injection uses the same origin test.
+  const injected = [];
+  for (const u of ["app://localhost/new", "app://localhost.evil/", "app://other/", "https://claude.ai/new",
+                   "app://localhost/setup-desktop-3p", "app://localhost/setup-desktop-3p?x=1"]) {
+    const wc = { getURL: () => u, on: (ev, fn) => { if (ev === "dom-ready") fn(); }, ipc: { handle: () => {} },
+      executeJavaScript: () => { injected.push(u); return Promise.resolve(); } };
+    for (const fn of appListeners["web-contents-created"] || []) { try { fn({}, wc); } catch {} }
+  }
+  okm(JSON.stringify(injected) === JSON.stringify(["app://localhost/new", "https://claude.ai/new"]),
+      "main: page injected into app://localhost and claude.ai only, not the 3P setup wizard (got " + JSON.stringify(injected) + ")");
+  rmSync(mdir, { recursive: true, force: true });
+  console.log("[main] " + mainPass + "/" + (mainPass + mainFail) + " sender-guard assertions passed");
+}
+
 // --- runner ----------------------------------------------------------------
 
 if (!CHROMIUM) {
@@ -932,8 +987,8 @@ const scenarios = [
   ["leak", FIXTURES.browser, RUNS.leak, null]
 ];
 
-let pass = 0;
-let fail = 0;
+let pass = mainPass;
+let fail = mainFail;
 const skipped = [];
 if (!FONT) {
   console.log("note: no Anthropicons woff2 found under " +

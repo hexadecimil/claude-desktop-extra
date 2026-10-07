@@ -1258,6 +1258,54 @@
     });
   }
 
+  // --- inference: non-Anthropic models through a third-party gateway --------
+  // Ours, opt-in, and off by default: it relaxes Anthropic's own check that drops
+  // a gateway model whose ID does not look Anthropic from the model list. The
+  // list is built at startup, so a saved change applies on the next start; the
+  // read response carries what the RUNNING app started with (activeNow) next to
+  // the saved value, so describe() says "after a restart" exactly while they
+  // differ - the same arrangement as the transcript limits row below.
+  function renderAllowNonAnthropicModelsRow(panel) {
+    return renderToggleRow(panel, {
+      section: "Inference",
+      title: "Allow non-Anthropic models",
+      note: "Relaxes the built-in check that drops model IDs which do not look Anthropic - " +
+        "DeepSeek, Qwen, GLM, Kimi, gpt-oss and the like - from a third-party gateway's model " +
+        "list. For 3P/gateway users who route to non-Anthropic models through their own gateway; " +
+        "with it off, those routes are silently removed and the session falls back to the default " +
+        "model. The setting is per mode: set it while in 3P mode, where it is saved in " +
+        "~/.config/Claude-3p. Applies on restart - the model list is built at startup.",
+      ariaLabel: "allow non-Anthropic models from a third-party gateway in the model list",
+      read: "allowNonAnthropicModelsRead",
+      write: "allowNonAnthropicModelsSet",
+      lockFile: "claude-desktop-extra.jsonc",
+      // Opt-in: only an explicit true is on, so a shape we do not understand
+      // renders as off rather than claiming a feature that is not running.
+      isOn: function (res) { return res.enabled === true; },
+      describe: function (on, res) {
+        // `on` is the switch as shown now; res.activeNow is what the running app
+        // was started with - they differ for exactly as long as a restart is owed.
+        var pending = on !== (res.activeNow === true);
+        if (on) {
+          return pending ? "on - non-Anthropic gateway models after a restart"
+            : "on - the model list keeps non-Anthropic gateway models";
+        }
+        return pending ? "off - filtered to Anthropic models after a restart"
+          : "off - the model list is filtered to Anthropic models";
+      },
+      writeArg: function (next) { return next; },
+      // r.pendingRestart is the main side's answer; only an explicit false (the
+      // switch is back where the running app started) drops the restart wording.
+      toast: function (next, r) {
+        var label = next ? "Non-Anthropic models allowed" : "Non-Anthropic models blocked again";
+        return r && r.pendingRestart === false
+          ? label + " - no restart needed"
+          : label + " - restart Claude Desktop to apply";
+      },
+      errorPrefix: "Could not change the non-Anthropic model setting: "
+    });
+  }
+
   // --- sessions: how much of a big Code session the app loads ---------------
   // Ours, opt-in, and the other kind of row from Files quick open: NOT live. The
   // limits are handed to Anthropic's session manager when it is constructed at
@@ -2145,6 +2193,7 @@
     renderDiffViewsRow,
     renderPanelTabsRow,
     renderFilesQuickOpenRow,
+    renderAllowNonAnthropicModelsRow,
     renderTranscriptLimitsRow,
     renderWindowControlsRow,
     renderNativeTitlebarRow,

@@ -203,13 +203,15 @@ Global hotkey popup (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd>) on the mon
 
 Run on Bedrock, Vertex AI, Azure AI Foundry or any Anthropic-compatible gateway, without a claude.ai login. Configure it in Settings → Extra → Deployment, or fleet-wide via `/etc/claude-desktop/managed-settings.json`. Linux guide: [docs/third-party-inference.md](docs/third-party-inference.md).
 
+**Non-Anthropic models through your gateway:** upstream silently drops gateway model IDs that do not look Anthropic (DeepSeek, Qwen, GLM, Kimi, gpt-oss, ...) from the model list and falls back to the default model. Turn on Settings → Extra → Community Features → **Allow non-Anthropic models** (opt-in, 3P mode, restart) to keep them in the model list, the picker and running sessions; HIPAA and admin model allowlists still apply. Recipe with an EU gateway: [docs/cookbook/opper-gateway.md](docs/cookbook/opper-gateway.md), more recipes in [docs/cookbook/](docs/cookbook/).
+
 ## Feature Flag Overrides (advanced)
 
 Override Anthropic's server-side feature flags in `~/.config/Claude/claude-desktop-extra.jsonc`, or flip them in Settings → Extra → Anthropic Features. Details: [docs/feature-flags.md](docs/feature-flags.md).
 
 ## Patches
 
-We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (13 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (32, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
+We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (15 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (32, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
 
 ## Command-line flags
 

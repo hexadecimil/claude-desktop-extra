@@ -19,12 +19,15 @@ const ok = (c, n) => { if (c) { pass++; console.log("  ok   " + n); }
 
 // getPath: pass a string for a real profile dir, or null to simulate no
 // userData path at all (electron.app.getPath throwing, e.g. before ready).
+// app.on listeners of the LAST load(), so the dom-ready injection can be driven.
+let appListeners = {};
 function load(profileDir) {
   const handlers = {};
+  appListeners = {};
   const electron = {
     app: {
       getPath: () => { if (profileDir === null) throw new Error("no app"); return profileDir; },
-      on: () => {}
+      on: (ev, fn) => { (appListeners[ev] = appListeners[ev] || []).push(fn); }
     },
     ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } }
   };
@@ -242,6 +245,38 @@ const okSenderEv = sender("https://claude.ai/epitaxy");
   const after = await h["cdb-tabs:pref-read"](okSenderEv);
   ok(after.ok === true && after.enabled === false,
      "guard: none of the rejected pref-set calls changed the stored pref");
+}
+
+// The sender guard is exact-origin. 3P mode serves the SPA from
+// app://localhost, whose parsed origin is the opaque "null", so it has to be
+// normalised before the compare - and nothing near it may slip through.
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-tabs-3p-"));
+  const h = load(dir);
+  const from = (u, parent = null) => ({ sender: { getURL: () => u, isDestroyed: () => false }, senderFrame: { parent } });
+  for (const u of ["https://claude.ai/x", "https://preview.claude.ai/x", "https://claude.com/",
+                   "https://preview.claude.com/x", "app://localhost/", "app://localhost/new?x=1"]) {
+    ok((await h["cdb-tabs:pref-read"](from(u))).ok === true, "sender " + u + " accepted");
+  }
+  for (const u of ["https://evil.example/", "app://localhost.evil/", "app://localhost:1234/", "app://other/",
+                   "file:///home/u/x.html", "http://localhost:3000/", "http://claude.ai/", "not a url"]) {
+    const r = await h["cdb-tabs:pref-read"](from(u));
+    ok(r.ok === false && /unrecognized sender/.test(r.error || ""), "sender " + u + " rejected");
+  }
+  ok((await h["cdb-tabs:pref-read"](from("app://localhost/", {}))).ok === false,
+     "an app://localhost subframe is rejected");
+  // The page injection follows the same window: app://localhost gets the
+  // page script, a lookalike app:// host does not.
+  const injected = [];
+  for (const u of ["app://localhost/new", "app://localhost.evil/", "app://other/", "app://localhost:1234/",
+                   "app://localhost/setup-desktop-3p", "app://localhost/setup-desktop-3p/step?x=1"]) {
+    const wc = { getURL: () => u, on: (ev, fn) => { if (ev === "dom-ready") fn(); },
+      executeJavaScript: () => { injected.push(u); return Promise.resolve(); } };
+    for (const fn of appListeners["web-contents-created"] || []) fn({}, wc);
+  }
+  ok(injected.length === 1 && injected[0] === "app://localhost/new",
+     "page injected into app://localhost only, not lookalikes or the 3P setup wizard (got " + JSON.stringify(injected) + ")");
+  rmSync(dir, { recursive: true, force: true });
 }
 
 console.log("\n" + pass + " passed, " + fail + " failed");

@@ -1374,6 +1374,67 @@ try {
     }
   }
 
+  section("[16] the Extra-row IPC sender guard: exact origins, 3P app://localhost included");
+  {
+    // js/window_controls_main.js behind the reader, both in one vm context
+    // exactly as the patch concatenates them. 3P mode serves the SPA from
+    // app://localhost, whose parsed origin is the opaque "null": it has to be
+    // normalised before the compare, and nothing near it may slip through.
+    const MAIN_SRC = readFileSync(join(ROOT, "js", "window_controls_main.js"), "utf8");
+    const dir = join(scratch, "userdata-ipc");
+    mkdirSync(dir, { recursive: true });
+    const handlers = {};
+    const appListeners = {};
+    const sandbox = {
+      console,
+      setTimeout,
+      process: { platform: "linux", env: {} },
+      // The running window was built in bare mode, so the dom-ready inset fix is live.
+      __cdbWinCtlMemo: { noWindowControls: true },
+      require(id) {
+        if (id === "electron") {
+          return {
+            app: { getPath: () => dir, on: (ev, fn) => { (appListeners[ev] = appListeners[ev] || []).push(fn); }, whenReady: () => new Promise(() => {}) },
+            ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } },
+          };
+        }
+        return nodeRequire(id);
+      },
+    };
+    sandbox.globalThis = sandbox;
+    const ctx = vm.createContext(sandbox);
+    vm.runInContext(PREF_SRC, ctx);
+    vm.runInContext(MAIN_SRC, ctx);
+    check("ipc: cdb-wc:pref-read registered", typeof handlers["cdb-wc:pref-read"], "function");
+    const from = (u, parent = null) => ({
+      sender: { getURL: () => u, isDestroyed: () => false },
+      senderFrame: { parent },
+    });
+    for (const ch of ["cdb-wc:pref-read", "cdb-wc:native-read"]) {
+      for (const u of ["https://claude.ai/x", "https://preview.claude.ai/x", "https://claude.com/",
+                       "https://preview.claude.com/x", "app://localhost/", "app://localhost/new?x=1"]) {
+        check(`ipc: ${ch} accepts ${u}`, handlers[ch](from(u)).ok, true);
+      }
+      for (const u of ["https://evil.example/", "app://localhost.evil/", "app://localhost:1234/",
+                       "app://other/", "file:///home/u/x.html", "http://localhost:3000/",
+                       "http://claude.ai/", "not a url"]) {
+        check(`ipc: ${ch} rejects ${u}`, handlers[ch](from(u)).ok, false);
+      }
+      check(`ipc: ${ch} rejects an app://localhost subframe`,
+        handlers[ch](from("app://localhost/", {})).ok, false);
+    }
+    // The inset fix follows the same origins, minus upstream's 3P setup wizard.
+    const injected = [];
+    for (const u of ["app://localhost/new", "https://claude.ai/new", "app://localhost.evil/",
+                     "app://localhost/setup-desktop-3p", "app://localhost/setup-desktop-3p?x=1"]) {
+      const wc = { getURL: () => u, on: (ev, fn) => { if (ev === "dom-ready") fn(); },
+        executeJavaScript: () => { injected.push(u); return Promise.resolve(); } };
+      for (const fn of appListeners["web-contents-created"] || []) fn({}, wc);
+    }
+    check("inject: app://localhost + claude.ai only, not the 3P setup wizard",
+      JSON.stringify(injected), JSON.stringify(["app://localhost/new", "https://claude.ai/new"]));
+  }
+
   console.log("");
   if (failures.length) {
     console.log(`${failures.length} CHECK(S) FAILED:`);

@@ -408,5 +408,26 @@ for (const [label, heap] of [["getHeapStatistics() throws", "throw"], ["heap_siz
   rmSync(dir, { recursive: true, force: true });
 }
 
+// The sender guard is exact-origin. 3P mode serves the SPA from
+// app://localhost, whose parsed origin is the opaque "null", so it has to be
+// normalised before the compare - and nothing near it may slip through.
+{
+  const dir = mkdtempSync(join(tmpdir(), "cdb-tlimits-3p-"));
+  const h = load(dir).handlers;
+  const from = (u, parent = null) => ({ sender: { getURL: () => u, isDestroyed: () => false }, senderFrame: { parent } });
+  for (const u of ["https://claude.ai/x", "https://preview.claude.ai/x", "https://claude.com/",
+                   "https://preview.claude.com/x", "app://localhost/", "app://localhost/new?x=1"]) {
+    ok((await h["cdb-tlimits:pref-read"](from(u))).ok === true, "sender " + u + " accepted");
+  }
+  for (const u of ["https://evil.example/", "app://localhost.evil/", "app://localhost:1234/", "app://other/",
+                   "file:///home/u/x.html", "http://localhost:3000/", "http://claude.ai/", "not a url"]) {
+    const r = await h["cdb-tlimits:pref-read"](from(u));
+    ok(r.ok === false && /unrecognized sender/.test(r.error || ""), "sender " + u + " rejected");
+  }
+  ok((await h["cdb-tlimits:pref-read"](from("app://localhost/", {}))).ok === false,
+     "an app://localhost subframe is rejected");
+  rmSync(dir, { recursive: true, force: true });
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

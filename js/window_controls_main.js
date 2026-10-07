@@ -135,15 +135,26 @@
   // substring test would also pass a lookalike host such as
   // "https://evil.example/?next=claude.ai" or "https://claude.ai.evil.example"
   // - both contain the substring, neither is our origin.
+  //
+  // app://localhost is the main window in 3P mode (upstream serves the bundled
+  // SPA from it instead of claude.ai). Its URL.origin is the opaque "null", so
+  // the origin is normalised to protocol + "//" + host first - the same
+  // normalisation upstream's own eIPC sender validator applies. host keeps a
+  // port, so app://localhost:1234 stays distinct and is rejected.
   var ALLOWED_ORIGINS = [
     "https://claude.ai",
     "https://preview.claude.ai",
     "https://claude.com",
-    "https://preview.claude.com"
+    "https://preview.claude.com",
+    "app://localhost"
   ];
   function originAllowed(rawUrl) {
     var origin;
-    try { origin = new _URL(String(rawUrl)).origin; } catch (e) { return false; }
+    try {
+      var u = new _URL(String(rawUrl));
+      origin = u.origin;
+      if (!origin || origin === "null") origin = u.protocol + "//" + u.host;
+    } catch (e) { return false; }
     for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
       if (origin === ALLOWED_ORIGINS[i]) return true;
     }
@@ -222,6 +233,9 @@
       try {
         if (!PREF.withoutOverlay()) return;
         if (!originAllowed(wc.getURL() || "")) return;
+        // Upstream's 3P setup wizard also lives on app://localhost; it is not
+        // the claude.ai header this fix targets.
+        if (/^app:\/\/localhost\/setup-desktop-3p(?:[\/?#]|$)/i.test(wc.getURL() || "")) return;
         wc.executeJavaScript(PAGE_SRC).catch(function () {});
         if (!pageLogged) {
           pageLogged = true;

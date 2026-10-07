@@ -496,18 +496,32 @@ find "$TREE_DIR/resources" -maxdepth 1 \( -name "*.exe" -o -name "*.dll" -o -nam
 # Ensure claude-ssh binaries are executable (if shipped)
 chmod +x "$TREE_DIR/resources/claude-ssh/claude-ssh-"* 2>/dev/null || true
 
-# Apply ion-dist patches (the SPA has content-hashed filenames, so the patch finds
-# its target file dynamically by grepping for a unique pattern).
+# Apply ion-dist patches: every `@patch-type: nim-dir` patch targeting
+# resources/ion-dist, in basename order like the orchestrator (the SPA has
+# content-hashed filenames, so each patch finds its target file by content).
 ION_DIST_DIR="$TREE_DIR/resources/ion-dist"
-ION_DIST_PATCH="$PATCHES_DIR/linux/fix_ion_dist_linux"
-if [ -d "$ION_DIST_DIR" ] && [ -x "$ION_DIST_PATCH" ]; then
-    log_info "Applying ion-dist patches..."
-    if ! "$ION_DIST_PATCH" "$ION_DIST_DIR"; then
-        log_error "ion-dist patch failed"
+if [ -d "$ION_DIST_DIR" ]; then
+    mapfile -t ION_DIST_PATCHES < <(
+        grep -l '^# @patch-target: resources/ion-dist$' "$PATCHES_DIR"/*/*.nim \
+            | xargs -r grep -l '^# @patch-type: nim-dir$' \
+            | awk -F/ '{print $NF "\t" $0}' | LC_ALL=C sort | cut -f2
+    )
+    if [ "${#ION_DIST_PATCHES[@]}" -eq 0 ]; then
+        log_error "no ion-dist (nim-dir) patches found under $PATCHES_DIR"
         exit 1
     fi
-elif [ -d "$ION_DIST_DIR" ]; then
-    log_warn "ion-dist found but patch binary not available - skipping"
+    log_info "Applying ${#ION_DIST_PATCHES[@]} ion-dist patch(es)..."
+    for src in "${ION_DIST_PATCHES[@]}"; do
+        bin="${src%.nim}"
+        if [ ! -x "$bin" ]; then
+            log_error "ion-dist patch binary not compiled: $bin (cd patches && make)"
+            exit 1
+        fi
+        if ! "$bin" "$ION_DIST_DIR"; then
+            log_error "ion-dist patch failed: $(basename "$src")"
+            exit 1
+        fi
+    done
 else
     log_warn "ion-dist not found in upstream resources - skipping"
 fi

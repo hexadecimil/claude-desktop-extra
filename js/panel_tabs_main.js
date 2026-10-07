@@ -169,15 +169,26 @@
   // would also pass a lookalike host such as "https://evil.example/?next=
   // claude.ai" or "https://claude.ai.evil.example" - both contain the
   // substring, neither is our origin.
+  //
+  // app://localhost is the main window in 3P mode (upstream serves the bundled
+  // SPA from it instead of claude.ai). Its URL.origin is the opaque "null", so
+  // the origin is normalised to protocol + "//" + host first - the same
+  // normalisation upstream's own eIPC sender validator applies. host keeps a
+  // port, so app://localhost:1234 stays distinct and is rejected.
   var ALLOWED_ORIGINS = [
     "https://claude.ai",
     "https://preview.claude.ai",
     "https://claude.com",
-    "https://preview.claude.com"
+    "https://preview.claude.com",
+    "app://localhost"
   ];
   function originAllowed(rawUrl) {
     var origin;
-    try { origin = new _URL(String(rawUrl)).origin; } catch (e) { return false; }
+    try {
+      var u = new _URL(String(rawUrl));
+      origin = u.origin;
+      if (!origin || origin === "null") origin = u.protocol + "//" + u.host;
+    } catch (e) { return false; }
     for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
       if (origin === ALLOWED_ORIGINS[i]) return true;
     }
@@ -237,9 +248,15 @@
   // re-validates the sender origin strictly, above). It is looser than
   // ALLOWED_ORIGINS on purpose: any claude.ai/claude.com subdomain gets the
   // injection, so an upstream move to another subdomain does not kill the bar.
+  // app://localhost (exact, no port) is the main window in 3P mode.
   function injectHost(rawUrl) {
-    var host;
-    try { host = new _URL(String(rawUrl)).hostname; } catch (e) { return false; }
+    var u;
+    try { u = new _URL(String(rawUrl)); } catch (e) { return false; }
+    if (u.protocol === "app:" && u.host === "localhost") {
+      // Upstream's 3P setup wizard has none of the UI the page script touches.
+      return !/^app:\/\/localhost\/setup-desktop-3p(?:[\/?#]|$)/i.test(String(rawUrl));
+    }
+    var host = u.hostname;
     return host === "claude.ai" || host.endsWith(".claude.ai") ||
       host === "claude.com" || host.endsWith(".claude.com");
   }

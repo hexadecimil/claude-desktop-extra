@@ -4,6 +4,12 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-10-07
 
+### Allow non-Anthropic models through a 3P gateway
+
+- New opt-in **Allow non-Anthropic models** switch (Settings -> Extra -> Community Features -> Inference, off by default). It relaxes Anthropic's built-in filter that drops gateway model IDs which do not look Anthropic. Routes like `melious/deepseek-v4.1-flash` or `inceptron/zai-org/GLM-5.3` then survive in the Setup model list, the picker, the runtime session gate, gateway `/v1/models` discovery and `anthropicFamilyTier` pins. Without the switch they are silently dropped and the session falls back to the default model. HIPAA, admin allowlist and app-catalog gates are untouched, and 1P/Bedrock/Vertex/Foundry validation is unchanged. The setting is per mode (set it in 3P), takes effect on restart, and is locked by `allowNonAnthropicModels` in the hand-owned `claude-desktop-extra.jsonc`. Upstream's 3P setup wizard (Developer -> Configure Third-Party Inference) carries its own copy of the check in `ion-dist`. With the switch on, it no longer flags these models as "Doesn't look like an Anthropic model" or blocks Apply Changes; the setting reaches the wizard through its existing `desktopBootFeatures` boot payload. Patches: `add_feature_allow_non_anthropic_models.nim` and `add_feature_allow_non_anthropic_models_ion.nim`. `build-patched-tarball.sh` now runs every `resources/ion-dist` patch, not just `fix_ion_dist_linux`, and fails on a missing binary. Covered by `test-allow-non-anthropic-models.mjs`.
+- New [docs/cookbook/](docs/cookbook/) with a first recipe: [non-Anthropic models via Opper (EU gateway)](docs/cookbook/opper-gateway.md).
+- The remaining Extra rows (Files quick open, panel tabs, diff views, transcript limits, window controls) now also accept the 3P window (`app://localhost`), and their page scripts load there. Before this they showed "rejected: unrecognized sender" in 3P. The 3P setup wizard window is skipped, the same as for the Extra page.
+
 ### Extra settings now show up in 3P mode
 
 - In third-party inference mode (gateway, Bedrock, Vertex, Foundry) the main

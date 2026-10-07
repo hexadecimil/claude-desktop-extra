@@ -69,6 +69,11 @@
   // "transcriptLimitsMainMiB": 512,
   // "transcriptLimitsSubagentMiB": 384,
 
+  // allowNonAnthropicModels: keep a 3P gateway's non-Anthropic models (DeepSeek, Qwen,
+  // GLM, ...) in the model list instead of dropping them. Per mode - set it in the
+  // 3P config dir (~/.config/Claude-3p). Needs a restart.
+  // "allowNonAnthropicModels": false,
+
   "growthbookOverrides": {
     // "17519066": true, // external-browser URL block
     // "21606909": true, // app-menu Alt+letter mnemonics - hidden Alt+<initial> accelerators open the matching top-level menu (default ON) (new in v2.2553.0)
