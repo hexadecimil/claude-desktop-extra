@@ -67,6 +67,25 @@ const sender = { sender: { getURL: () => "https://claude.ai/x", isDestroyed: () 
   rmSync(dir, { recursive: true });
 }
 {
+  // The sender guard is exact-origin. 3P mode serves the SPA from
+  // app://localhost, whose parsed origin is the opaque "null", so it has to be
+  // normalised before the compare - and nothing near it may slip through.
+  const dir = mkdtempSync(join(tmpdir(), "cdb-wt-"));
+  const t = load(dir);
+  const from = (u, parent = null) => ({ sender: { getURL: () => u, isDestroyed: () => false }, senderFrame: { parent } });
+  for (const u of ["https://claude.ai/x", "https://preview.claude.ai/x", "https://claude.com/",
+                   "https://preview.claude.com/x", "app://localhost/", "app://localhost/new?x=1"]) {
+    ok((await t.handlers["cdb-wt:pref-read"](from(u))).ok === true, "sender " + u + " accepted");
+  }
+  for (const u of ["https://evil.example/", "app://localhost.evil/", "app://localhost:1234/", "app://other/",
+                   "file:///home/u/x.html", "http://localhost:3000/", "http://claude.ai/", "not a url"]) {
+    ok((await t.handlers["cdb-wt:pref-read"](from(u))).ok === false, "sender " + u + " rejected");
+  }
+  ok((await t.handlers["cdb-wt:pref-read"](from("app://localhost/", {}))).ok === false,
+     "an app://localhost subframe is rejected");
+  rmSync(dir, { recursive: true });
+}
+{
   // Fake webContents / views / windows: only what the dom-ready handler and
   // the browser-window-created hook touch.
   const fakeWc = (url) => {

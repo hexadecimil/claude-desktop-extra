@@ -2479,7 +2479,14 @@
   function showValue(entry, value) {
     if (!isSet(value)) return "";
     if (entry.kind === "lines" || entry.kind === "models") {
-      return (Array.isArray(value) ? value : [value]).join("\n");
+      // A model entry may be an object ({ name, labelOverride, ... }); show it as
+      // one JSON line so it survives an edit and parses back on save.
+      return (Array.isArray(value) ? value : [value]).map(function (v) {
+        if (v !== null && typeof v === "object") {
+          try { return JSON.stringify(v); } catch (e) { return String(v); }
+        }
+        return String(v);
+      }).join("\n");
     }
     if (entry.kind === "json") {
       try { return JSON.stringify(value, null, 2); } catch (e) { return String(value); }

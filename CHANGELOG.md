@@ -4,6 +4,38 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-10-07
 
+### Extra settings now show up in 3P mode
+
+- In third-party inference mode (gateway, Bedrock, Vertex, Foundry) the main
+  window loads the bundled app from `app://localhost` instead of claude.ai.
+  The Extra page was only injected into http(s) documents and its IPC handlers
+  only accepted claude.ai / claude.com senders, so the Extra group never
+  appeared in Settings there (the limitation noted on 2026-09-16).
+- `app://localhost` is now an allowed origin for the Extra handlers and the
+  window transparency (`cdb-wt:*`) handlers. Its parsed origin is the opaque
+  `"null"`, so it is normalised to `app://localhost` first, the same way
+  upstream's own IPC sender check does. Matching stays exact and main-frame
+  only: `app://localhost.evil`, `app://localhost:1234`, `app://other`,
+  `file://`, `http://localhost` and subframes are rejected.
+- The page injection now uses the same origin list instead of "any http(s)
+  page", and skips upstream's 3P setup window (`app://localhost/setup-desktop-3p`).
+- With transparency on, the 3P main window's content now turns see-through
+  as well, since it uses the same origin list.
+- Covered by `test-deployment-main.mjs` (sender guard + a new dom-ready
+  injection section) and `test-window-transparency.mjs`.
+
+### Model list shows object entries instead of `[object Object]`
+
+- `inferenceModels` entries can be objects (`{ "name": ..., "labelOverride":
+  ..., "supports1m": ... }`), which upstream's own 3P Setup writes. The Extra
+  page joined them as strings, so each showed as `[object Object]`, and saving
+  the field would have written that literal text back over the real list.
+- Object entries now show as one JSON line each, and a line starting with `{`
+  parses back to an object on save (it must carry a non-empty `"name"`; a
+  broken line is rejected with its line number). Plain ids are unchanged, and
+  other list fields never parse JSON.
+- Covered by `test-deployment-main.mjs` and `test-extra-settings-dom.mjs`.
+
 ### Upstream v2.26454.0
 
 - Re-fitted three patches to the new build: transcript limits (the session

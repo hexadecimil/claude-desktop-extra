@@ -1090,7 +1090,28 @@
         if (!list.length) return { del: true };
         if (list.length > 200) return { error: entry.key + " has too many entries" };
         for (var i = 0; i < list.length; i++) {
-          if (typeof list[i] !== "string") return { error: entry.key + " must be a list of strings" };
+          // Model entries may also be objects ({ name, labelOverride, supports1m,
+          // ... }), which the page shows as one JSON line each. Plain lists stay
+          // strings only.
+          if (entry.kind === "models" && typeof list[i] === "string" && list[i].charAt(0) === "{") {
+            try { list[i] = JSON.parse(list[i]); } catch (e) {
+              return { error: entry.key + ": line " + (i + 1) + ": " + e.message };
+            }
+          }
+          if (entry.kind === "models" && list[i] !== null && typeof list[i] === "object" && !Array.isArray(list[i])) {
+            if (typeof list[i].name !== "string" || !list[i].name.trim()) {
+              return { error: entry.key + ": line " + (i + 1) + " needs a \"name\"" };
+            }
+            if (list[i].name.length > 300 || JSON.stringify(list[i]).length > 2000) {
+              return { error: entry.key + " has an over-long entry" };
+            }
+            continue;
+          }
+          if (typeof list[i] !== "string") {
+            return { error: entry.key + (entry.kind === "models"
+              ? " entries must be model ids or { \"name\": ... } objects"
+              : " must be a list of strings") };
+          }
           if (list[i].length > 300) return { error: entry.key + " has an over-long entry" };
         }
         return { value: list };
@@ -1193,15 +1214,29 @@
   // behind this guard write the 3P gateway URL, its API key and the bootstrap
   // URL, and relaunch the app. Only the main frame is accepted: subframes never
   // get the preload, but reject them explicitly rather than relying on that.
+  //
+  // app://localhost is the main window in 3P mode (upstream serves the bundled
+  // SPA from it instead of claude.ai). URL.origin is the opaque "null" for that
+  // scheme, so the origin is normalised to protocol + "//" + host first - the
+  // same normalisation upstream's own eIPC sender validator applies. host keeps
+  // a port, so app://localhost:1234 stays distinct and is rejected.
   var __cdbEx_ALLOWED_ORIGINS = [
     "https://claude.ai",
     "https://preview.claude.ai",
     "https://claude.com",
-    "https://preview.claude.com"
+    "https://preview.claude.com",
+    "app://localhost"
   ];
+  function __cdbEx_originOf(rawUrl) {
+    var u;
+    try { u = new _URL(String(rawUrl)); } catch (e) { return ""; }
+    var o = u.origin;
+    if (!o || o === "null") o = u.protocol + "//" + u.host;
+    return o;
+  }
   function __cdbEx_originAllowed(rawUrl) {
-    var origin;
-    try { origin = new _URL(String(rawUrl)).origin; } catch (e) { return false; }
+    var origin = __cdbEx_originOf(rawUrl);
+    if (!origin) return false;
     for (var i = 0; i < __cdbEx_ALLOWED_ORIGINS.length; i++) {
       if (origin === __cdbEx_ALLOWED_ORIGINS[i]) return true;
     }
@@ -1740,8 +1775,11 @@
     wc.on("dom-ready", function () {
       try {
         var url = wc.getURL() || "";
-        if (!/^https?:\/\//i.test(url)) return;
-        if (/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(url)) return;
+        // The same exact-origin list as the IPC guard: claude.ai in 1P,
+        // app://localhost in 3P. Upstream's 3P setup window lives on
+        // app://localhost too but has no settings dialog, so it is skipped.
+        if (!__cdbEx_originAllowed(url)) return;
+        if (/^app:\/\/localhost\/setup-desktop-3p(?:[\/?#]|$)/i.test(url)) return;
         __cdbEx_styleOne(wc);
         wc.executeJavaScript(__cdbEx_pageSrc).then(function (status) {
           // Deduped: every OAuth popup and helper view reports "skipped", and a

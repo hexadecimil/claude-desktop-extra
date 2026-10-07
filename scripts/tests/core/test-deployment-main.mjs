@@ -82,9 +82,10 @@ function install({ inThreeP = false } = {}) {
   mkdirSync(userData, { recursive: true });
   const handlers = {};
   const opened = [];
+  const appEvents = {};
   const Module = require2("module");
   const fakeElectron = {
-    app: { getPath: () => userData, on: () => {}, relaunch: () => {}, exit: () => {} },
+    app: { getPath: () => userData, on: (e, f) => { appEvents[e] = f; }, relaunch: () => {}, exit: () => {} },
     ipcMain: {
       handle: (ch, fn) => { handlers[ch] = fn; },
       removeHandler: () => {}
@@ -121,7 +122,7 @@ function install({ inThreeP = false } = {}) {
   };
   const threeP = inThreeP ? userData : userData + "-3p";
   return {
-    call, handlers, diag, userData, threeP, opened,
+    call, handlers, appEvents, diag, userData, threeP, opened,
     modeFile: join(threeP, "claude_desktop_config.json"),
     libDir: join(threeP, "configLibrary"),
     metaFile: join(threeP, "configLibrary", "_meta.json"),
@@ -347,6 +348,21 @@ section("[8] values are coerced and validated, or refused with a reason");
   ok(s("inferenceModels", "claude-opus-4-8\nclaude-sonnet-4-6").ok === true, "so does the model list");
   ok(JSON.stringify(read().inferenceModels) === '["claude-opus-4-8","claude-sonnet-4-6"]',
      "in the order they were typed", JSON.stringify(read().inferenceModels));
+  // Upstream also takes object entries ({ name, labelOverride, supports1m, ... }).
+  // The textarea shows each one as a JSON line, so that line must parse back.
+  ok(s("inferenceModels", 'claude-opus-4-8\n{"name":"claude-sonnet-4-6","labelOverride":"Sonnet"}').ok === true,
+     "a JSON object line is accepted as a model entry");
+  ok(JSON.stringify(read().inferenceModels) === '["claude-opus-4-8",{"name":"claude-sonnet-4-6","labelOverride":"Sonnet"}]',
+     "stored as a real object, order kept", JSON.stringify(read().inferenceModels));
+  ok(s("inferenceModels", [{ name: "claude-opus-4-8", supports1m: true }]).ok === true,
+     "an array with an object entry round-trips");
+  ok(s("inferenceModels", '{"labelOverride":"no name"}').ok === false, "an object without a name is rejected");
+  ok(s("inferenceModels", '{"name":"x"').ok === false, "and a broken JSON line");
+  ok(s("inferenceModels", '[1,2]').ok === true && JSON.stringify(read().inferenceModels) === '["[1,2]"]',
+     "a line that is not an object stays a plain string id");
+  ok(s("coworkEgressAllowedHosts", '{"name":"x"}').ok === true
+     && JSON.stringify(read().coworkEgressAllowedHosts) === '["{\\"name\\":\\"x\\"}"]',
+     "plain lists never parse JSON", JSON.stringify(read().coworkEgressAllowedHosts));
 
   ok(s("banner", "{ not json").ok === false, "a JSON key rejects a broken document");
   ok(s("banner", '{"text":"hi"}').ok === true, "and parses a good one");
@@ -465,7 +481,14 @@ section("[11] only the settings page may reach these handlers");
     "http://claude.ai/",
     "https://claude.ai:8443/",
     "https://user@claude.ai@evil.example/",
-    "https://xn--claude-ai.example/"
+    "https://xn--claude-ai.example/",
+    // 3P mode serves the SPA from app://localhost, whose parsed URL origin is
+    // the opaque "null" - exactly app://localhost is ours, nothing near it.
+    "app://localhost.evil/",
+    "app://localhost:1234/",
+    "app://other/",
+    "file:///home/u/x.html",
+    "http://localhost:3000/"
   ];
   for (const u of foreign) {
     const r = p.handlers["cdb-deploy:set"](from(u), "inferenceGatewayBaseUrl", "https://attacker.example");
@@ -476,10 +499,14 @@ section("[11] only the settings page may reach these handlers");
   ok(!existsSync(p.metaFile) && !existsSync(p.modeFile), "none of them wrote anything");
 
   const allowed = ["https://claude.ai/settings", "https://preview.claude.ai/x",
-                   "https://claude.com/", "https://preview.claude.com/x?y=1#z"];
+                   "https://claude.com/", "https://preview.claude.com/x?y=1#z",
+                   "app://localhost/", "app://localhost/new?x=1"];
   for (const u of allowed) {
     ok(p.handlers["cdb-deploy:read"](from(u)).ok === true, "our own origin " + u + " is accepted");
   }
+  ok(p.handlers["cdb-deploy:read"]({ sender: { isDestroyed: () => false, getURL: () => "app://localhost/" },
+                                     senderFrame: { parent: {} } }).ok === false,
+     "a subframe of the 3P app://localhost page is still rejected");
   ok(p.handlers["cdb-deploy:read"]({ sender: { getURL: () => "https://claude.ai/" }, senderFrame: { parent: null } }).ok === false,
      "a sender without isDestroyed() fails closed");
   ok(p.handlers["cdb-deploy:read"](from("not a url")).ok === false, "an unparseable URL fails closed");
@@ -598,6 +625,44 @@ section("[15] cdb-app:relaunch prefers upstream's relaunch primitive");
   ok(p3.diag.some(m => m.includes("falling back")),
      "a capture that throws is reported and falls back rather than dying silently");
   delete globalThis.__cdbRelaunchApp;
+}
+
+// --- [16] where the Extra page is injected ---------------------------------
+// The dom-ready hook decides which documents get the page script and the CSS.
+// In 3P mode the main window loads app://localhost, which an http(s)-only test
+// silently skipped, so the Extra group never appeared there. It must follow the
+// same exact-origin list as the sender guard, minus upstream's 3P setup window.
+section("[16] the page is injected into our origins (1P and 3P), and only those");
+{
+  const p = install();
+  const created = p.appEvents["web-contents-created"];
+  ok(typeof created === "function", "a web-contents-created hook is registered");
+  const injected = async (url) => {
+    const h = {};
+    const wc = {
+      js: 0, css: 0,
+      on: (e, f) => { h[e] = f; },
+      getURL: () => url,
+      isDestroyed: () => false,
+      insertCSS: () => { wc.css++; return Promise.resolve("k" + wc.css); },
+      removeInsertedCSS: () => Promise.resolve(),
+      executeJavaScript: () => { wc.js++; return Promise.resolve("extra-settings: test"); }
+    };
+    created({}, wc);
+    if (h["dom-ready"]) h["dom-ready"]();
+    await new Promise((r) => setTimeout(r, 5));
+    return wc.js > 0 && wc.css > 0;
+  };
+  for (const u of ["https://claude.ai/new", "https://preview.claude.ai/x", "https://claude.com/",
+                   "app://localhost/new", "app://localhost/"]) {
+    ok(await injected(u), "injected into " + u);
+  }
+  for (const u of ["https://evil.example/", "http://localhost:3000/", "http://127.0.0.1:5173/",
+                   "app://localhost.evil/", "app://localhost:1234/", "app://other/",
+                   "file:///home/u/x.html", "about:blank", "",
+                   "app://localhost/setup-desktop-3p", "app://localhost/setup-desktop-3p?step=2"]) {
+    ok(!(await injected(u)), "not injected into " + (u || "(empty URL)"));
+  }
 }
 
 console.log("\n" + (fail ? `${pass} passed, ${fail} FAILED` : `ALL ${pass} CHECKS PASSED`));

@@ -1099,6 +1099,15 @@ async function deployPanel(deployItem) {
   ok(box.placeholder.indexOf("stored") >= 0, "but it says one is stored: " + box.placeholder);
   ok(panel.textContent.indexOf("sk-secret") < 0, "the secret itself never reaches the page");
 
+  // --- object model entries show as JSON lines, never "[object Object]"
+  const models = Array.from(panel.querySelectorAll(".cdbx-sections .cdbx-row"))
+    .find(function (r) { return keyOf(r) === "inferenceModels"; });
+  const area = models && models.querySelector("textarea");
+  ok(!!area, "the model list row is a textarea");
+  ok(area.value.indexOf("[object Object]") < 0, "an object entry is not stringified to [object Object]: " + JSON.stringify(area.value));
+  ok(area.value === 'claude-opus-4-8\n{"name":"claude-sonnet-4-6","labelOverride":"Sonnet"}',
+     "strings stay bare, objects become one JSON line each: " + JSON.stringify(area.value));
+
   // --- a locked key cannot be written from here
   const locked = Array.from(panel.querySelectorAll(".cdbx-sections .cdbx-row"))
     .find(function (r) { return keyOf(r) === "disableDeploymentModeChooser"; });
@@ -1846,7 +1855,7 @@ window.__deployState = {
       inferenceProvider: "gateway",
       inferenceGatewayBaseUrl: "http://127.0.0.1:4000",
       inferenceGatewayApiKey: "__cdb_unchanged__",
-      inferenceModels: ["claude-opus-4-8", "claude-sonnet-4-6"]
+      inferenceModels: ["claude-opus-4-8", { name: "claude-sonnet-4-6", labelOverride: "Sonnet" }]
     },
     unknown: [],
     selects3p: true

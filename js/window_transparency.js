@@ -312,12 +312,21 @@
   var SHELL_CSS = "html,html body{background:transparent!important}" +
     "html #boot-placeholder-sidebar,html #boot-placeholder-sidebar-rows,html [class*=boot-placeholder-seam],html [class*=boot-placeholder-frame],html [class*=boot-placeholder-row]{display:none!important}";
 
+  // app://localhost is the main window in 3P mode. Its URL.origin is the opaque
+  // "null", so normalise to protocol + "//" + host (upstream's eIPC validator
+  // does the same) and compare exactly; a port stays part of host.
   var ALLOWED_ORIGINS = [
     "https://claude.ai", "https://preview.claude.ai",
-    "https://claude.com", "https://preview.claude.com"
+    "https://claude.com", "https://preview.claude.com",
+    "app://localhost"
   ];
   function originAllowed(rawUrl) {
-    try { return ALLOWED_ORIGINS.indexOf(new _URL(String(rawUrl)).origin) !== -1; } catch (e) { return false; }
+    try {
+      var u = new _URL(String(rawUrl));
+      var o = u.origin;
+      if (!o || o === "null") o = u.protocol + "//" + u.host;
+      return ALLOWED_ORIGINS.indexOf(o) !== -1;
+    } catch (e) { return false; }
   }
   function isShell(rawUrl) {
     return /^file:\/\/.*\/renderer\/main_window\//.test(String(rawUrl));
