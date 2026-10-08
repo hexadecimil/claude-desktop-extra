@@ -259,11 +259,18 @@ stdenvNoCC.mkDerivation {
     # credential storage working even if a future nixpkgs electron stops shipping
     # it in the RPATH. Suffixed, so it can never shadow a library for the app's
     # children (MCP servers, claude-code, qemu).
+    #
+    # CHROME_DEVEL_SANDBOX: Electron 44's sandbox-helper lookup traps (SIGILL, no
+    # message) when it is unset, before the user-namespace sandbox is tried.
+    # nixpkgs' bin/electron wrapper sets it; we exec the raw binary, so we must
+    # too. The store file is not SUID and is never used as a helper (userns
+    # sandbox is chosen first); any value, even empty, avoids the trap.
     mkdir -p $out/bin
     cp launcher/claude-desktop $out/lib/claude-desktop/launcher.sh
     chmod +x $out/lib/claude-desktop/launcher.sh
     makeWrapper $out/lib/claude-desktop/launcher.sh $out/bin/claude-desktop \
       --suffix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libsecret ]} \
+      --set-default CHROME_DEVEL_SANDBOX "$out/lib/claude-desktop/chrome-sandbox" \
       --set CLAUDE_ELECTRON "$out/lib/claude-desktop/claude" \
       --set CLAUDE_LAUNCHER "claude-desktop" \
       --set ELECTRON_OZONE_PLATFORM_HINT "auto" \
