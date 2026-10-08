@@ -2617,7 +2617,8 @@ ELECTRON_ARGS+=('--enable-blink-features=WebBluetooth')
 # gives Electron a working sandbox: the .deb, .rpm and pacman packages install
 # chrome-sandbox 4755 root (CI's smoke test fails the build otherwise) and the
 # Nix package runs the nixpkgs electron binary, whose sandbox uses unprivileged
-# user namespaces instead of a SUID helper. The AppImage is the exception - its payload is a FUSE mount, which
+# user namespaces instead of a SUID helper (its wrapper must still set
+# CHROME_DEVEL_SANDBOX, or Electron 44 traps with SIGILL). The AppImage is the exception - its payload is a FUSE mount, which
 # cannot carry a SUID bit - so it, and only it, needs the sandbox turned off.
 #
 # This used to be added for EVERY Wayland and XWayland launch, which silently

@@ -2,11 +2,13 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
-## 2026-10-07
+## 2026-10-08
 
-### Nix: `nix run` no longer crashes without `--no-sandbox`
+### Nix: `nix run` no longer crashes without `--no-sandbox` (thanks @ttytm, #268)
 
 - The Nix package exited with `Illegal instruction (core dumped)` and no message whenever the launcher did not pass `--no-sandbox` (since the sandbox stopped being disabled for Wayland launches). Electron 44 (Chromium 152) traps in its sandbox-helper lookup when `CHROME_DEVEL_SANDBOX` is unset, before it ever tries the user-namespace sandbox. nixpkgs' own `bin/electron` wrapper sets that variable, but we exec the raw binary, so the wrapper never did. It is now set (`--set-default`) to the bundled `chrome-sandbox`. Any value avoids the trap, and the sandbox stays on: renderers run in their own user namespace with a seccomp filter.
+
+## 2026-10-07
 
 ### Allow non-Anthropic models through a 3P gateway
 
