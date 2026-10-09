@@ -4,7 +4,7 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-10-09
 
-### Upstream v2.31226.0
+### Upstream v2.31226.0 (thanks @hexadecimil, #269)
 
 - Re-fitted two patches. In both, upstream now runs a call inside the condition the patch anchors on
   (`if(<call>,!<test>)`): the suppressed renderer-gone log (the handler's first guard) and tray-less
