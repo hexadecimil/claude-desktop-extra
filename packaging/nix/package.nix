@@ -170,6 +170,23 @@ stdenvNoCC.mkDerivation {
     fi
     echo "claude-native libpipewire RPATH: OK ($native binding(s))"
 
+    # resources/disclaimer (new in 2.31226.0): when the file exists, the app
+    # starts user stdio MCP servers, Claude Code sessions and the Android
+    # emulator through it (`disclaimer --pgroup -- <cmd>`, so children they
+    # leave behind are stopped). It links only libc but asks for the FHS loader
+    # /lib64/ld-linux-x86-64.so.2, which NixOS does not have: every one of those
+    # launches would fail. Give it the store's loader and glibc. Absent from
+    # older tarballs, so its absence is not an error.
+    disclaimer=$out/lib/claude-desktop/resources/disclaimer
+    if [ -f "$disclaimer" ]; then
+      chmod u+w "$disclaimer"
+      patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} \
+        --set-rpath ${lib.makeLibraryPath [ stdenv.cc.libc ]} "$disclaimer"
+      echo "disclaimer interpreter: OK"
+    else
+      echo "disclaimer: not in this release, nothing to patch"
+    fi
+
     if ! patchelf --print-rpath $out/lib/claude-desktop/claude | grep -q libsecret; then
       echo "ERROR: libsecret is not in the claude binary's RPATH." >&2
       echo "nixpkgs' electron no longer ships Chromium's dlopen-only libraries there;" >&2

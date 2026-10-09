@@ -433,6 +433,14 @@ fi
 
 # Validate JavaScript syntax after patching
 log_info "Validating JavaScript syntax..."
+# Since v2.31226.0 the official bundle uses `await using` (explicit resource
+# management), which Electron 44 runs but only Node 24+ parses: an older node
+# would report upstream's own code as broken. Say so instead.
+if grep -qsF 'await using ' "$APP_DIR/app.asar.contents/.vite/build/"*.js &&
+    ! node -e 'new Function("async function f(){await using x=null}")' >/dev/null 2>&1; then
+    log_error "node $(node --version) cannot parse this bundle: it uses \`await using\`, which needs Node 24 or newer"
+    exit 1
+fi
 SYNTAX_FAILED=false
 for js_file in "$APP_DIR/app.asar.contents/.vite/build/"*.js; do
     [ -f "$js_file" ] || continue
