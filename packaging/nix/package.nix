@@ -170,22 +170,31 @@ stdenvNoCC.mkDerivation {
     fi
     echo "claude-native libpipewire RPATH: OK ($native binding(s))"
 
-    # resources/disclaimer (new in 2.31226.0): when the file exists, the app
-    # starts user stdio MCP servers, Claude Code sessions and the Android
-    # emulator through it (`disclaimer --pgroup -- <cmd>`, so children they
-    # leave behind are stopped). It links only libc but asks for the FHS loader
-    # /lib64/ld-linux-x86-64.so.2, which NixOS does not have: every one of those
-    # launches would fail. Give it the store's loader and glibc. Absent from
-    # older tarballs, so its absence is not an error.
-    disclaimer=$out/lib/claude-desktop/resources/disclaimer
-    if [ -f "$disclaimer" ]; then
-      chmod u+w "$disclaimer"
+    # Two bundled executables ask for the FHS loader (/lib64/ld-linux-x86-64.so.2,
+    # /lib/ld-linux-aarch64.so.1), which NixOS does not have, so they would not
+    # start at all. Give them the store's loader, glibc and libgcc_s:
+    #   - chrome-native-host: the Claude in Chrome native-messaging host; the app
+    #     points the browser's NativeMessagingHosts manifest at it (libc, libm,
+    #     libgcc_s). Required: its absence means the .deb layout moved.
+    #   - disclaimer (new in 2.31226.0): when the file exists, the app starts user
+    #     stdio MCP servers, Claude Code sessions and the Android emulator through
+    #     it (`disclaimer --pgroup -- <cmd>`) with no fallback if it cannot run
+    #     (libc only). Absent from older tarballs, so its absence is not an error.
+    for name in chrome-native-host disclaimer; do
+      bin=$out/lib/claude-desktop/resources/$name
+      if [ ! -f "$bin" ]; then
+        if [ "$name" = disclaimer ]; then
+          echo "disclaimer: not in this release, nothing to patch"
+          continue
+        fi
+        echo "ERROR: resources/$name is missing; the .deb layout moved." >&2
+        exit 1
+      fi
+      chmod u+w "$bin"
       patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} \
-        --set-rpath ${lib.makeLibraryPath [ stdenv.cc.libc ]} "$disclaimer"
-      echo "disclaimer interpreter: OK"
-    else
-      echo "disclaimer: not in this release, nothing to patch"
-    fi
+        --set-rpath ${lib.makeLibraryPath [ stdenv.cc.libc (lib.getLib stdenv.cc.cc) ]} "$bin"
+      echo "$name interpreter: OK"
+    done
 
     if ! patchelf --print-rpath $out/lib/claude-desktop/claude | grep -q libsecret; then
       echo "ERROR: libsecret is not in the claude binary's RPATH." >&2

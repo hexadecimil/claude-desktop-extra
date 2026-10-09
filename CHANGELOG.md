@@ -14,6 +14,8 @@ All notable changes to the claude-desktop-extra packages will be documented in t
   MCP servers, Claude Code sessions and the Android emulator through when the file exists. It asks for the
   FHS loader, so the Nix package now points it at the store's glibc loader; without that, those launches
   would fail on NixOS. Other formats ship it as is (it needs only glibc 2.34).
+- **NixOS:** `resources/chrome-native-host` (the Claude in Chrome native-messaging host the browser starts)
+  gets the same store loader, plus libgcc_s, so Claude in Chrome can reach the app on NixOS.
 - **Local builds need Node 24 or newer** for the syntax check: the bundle now uses `await using`, which
   Node 22 cannot parse. The build says so instead of reporting upstream's own code as broken; CI's Arch
   container already has a current Node.
