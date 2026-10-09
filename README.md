@@ -177,7 +177,7 @@ Check it with `curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/gpg
 
 ## The "Extra" Settings
 
-Settings → **Extra** holds everything this project adds: **Themes**, **Community Features** (opt-in switches such as Files quick open, panel tabs, diff view modes), **Anthropic Features** (every upstream feature flag as a switch) and **Deployment** (1P/3P switch and the full third-party inference config, no `sudo` needed).
+Settings → **Extra** holds everything this project adds: **Themes**, **Community Features** (opt-in switches such as Files quick open, panel tabs, diff view modes, custom models), **Models** (the custom models editor), **Anthropic Features** (every upstream feature flag as a switch) and **Deployment** (1P/3P switch and the full third-party inference config, no `sudo` needed).
 
 ![The Extra section in Claude's Settings](docs/global/2026-07-29_20-21-extra.png)
 
@@ -205,13 +205,17 @@ Run on Bedrock, Vertex AI, Azure AI Foundry or any Anthropic-compatible gateway,
 
 **Non-Anthropic models through your gateway:** upstream silently drops gateway model IDs that do not look Anthropic (DeepSeek, Qwen, GLM, Kimi, gpt-oss, ...) from the model list and falls back to the default model. Turn on Settings → Extra → Community Features → **Allow non-Anthropic models** (opt-in, 3P mode, restart) to keep them in the model list, the picker and running sessions; HIPAA and admin model allowlists still apply. Recipe with an EU gateway: [docs/cookbook/opper-gateway.md](docs/cookbook/opper-gateway.md), more recipes in [docs/cookbook/](docs/cookbook/).
 
+## Custom Models
+
+Use models from other providers (DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, a gateway, or Anthropic's API on your API credit) in the Code tab's model picker, next to Anthropic's. Sessions on them use your own key; everything else stays on your subscription. Off by default: add a provider in Settings → Extra → Models and turn it on. Details: [docs/custom-models.md](docs/custom-models.md).
+
 ## Feature Flag Overrides (advanced)
 
 Override Anthropic's server-side feature flags in `~/.config/Claude/claude-desktop-extra.jsonc`, or flip them in Settings → Extra → Anthropic Features. Details: [docs/feature-flags.md](docs/feature-flags.md).
 
 ## Patches
 
-We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (15 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (32, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
+We patch the official `app.asar` at repackage time: [`patches/community/`](docs/patches.md#community-features) (16 patches, opt-in features), [`patches/core/`](docs/patches.md#core-infrastructure) (7, infrastructure) and [`patches/linux/`](docs/patches.md#linux-compatibility) (32, Linux fixes). A patch that stops matching fails the build, and a patch is removed once upstream ships the behavior. Catalog: [docs/patches.md](docs/patches.md).
 
 ## Command-line flags
 

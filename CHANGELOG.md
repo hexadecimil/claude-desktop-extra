@@ -4,6 +4,32 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-10-09
 
+### Custom models in the Code picker (new community feature)
+
+Models from Anthropic-compatible endpoints (DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, a gateway
+such as LiteLLM, or Anthropic's API on your API credit) can be added to the Code tab's model picker, next
+to Anthropic's. Sessions on them go to that provider with your key; everything else stays on the
+subscription. Unlike 3P mode, nothing is replaced. Off by default.
+
+- Settings → Extra → **Models** manages providers and models: presets, Fetch models, a connection test
+  and effort detection. The same settings can be written under `customModels` in
+  `claude-desktop-extra.jsonc`.
+- The entries are added to claude.ai's `/api/bootstrap` response. A preload in the Claude Code CLI
+  (`BUN_OPTIONS`) forwards only the custom models' requests, reduced to what compatible APIs accept.
+  Changes to keys, models and the switch apply to open sessions.
+- Every model is also a sub-agent type, and each new session gets one system-prompt line about them.
+  Optional app-wide settings: the web search model, the small/fast model and the default sub-agent
+  model.
+- Models default to a 1M context window (`claude-<id>[1m]`). A model with a smaller window is set to
+  200k in its form.
+- Claude models on Anthropic's API are listed as `claude-<provider>-<model>`, so they do not take over
+  the subscription's entries. Their requests go through as the CLI writes them, prompt caching included,
+  except the attribution line, which says `cc_entrypoint=cli`: the API refuses `claude-desktop` on an
+  API key.
+- Keys are stored in a 0600 file, never reach the page or a session's environment, and only go to the
+  host they were saved for. Cowork, Dispatch and SSH sessions are not affected.
+- Docs: [`docs/custom-models.md`](docs/custom-models.md).
+
 ### Upstream v2.31226.0 (thanks @hexadecimil, #269)
 
 - Re-fitted two patches. In both, upstream now runs a call inside the condition the patch anchors on
