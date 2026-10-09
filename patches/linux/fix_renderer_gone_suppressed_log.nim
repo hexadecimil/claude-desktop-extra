@@ -50,6 +50,10 @@ proc apply*(input: string): string =
   # conditions themselves are re-emitted verbatim (the `await` inside the
   # second one stays where it was, in the enclosing async arrow), so which
   # deaths get reloaded is unchanged.
+  #   v2.31226.0: the first guard is a comma expression that runs a call before
+  #   the predicate - `if(II(e),!aBn(n))return;`. Leading calls are captured and
+  #   re-emitted in front of the predicate, so they still run first on every
+  #   death; nothing else moved.
   #
   # The second condition is captured as a run of non-brace characters, spelled
   # as three concatenated runs because the regex library caps a repetition
@@ -65,31 +69,33 @@ proc apply*(input: string): string =
   # second copy means upstream duplicated the handler and the site needs a
   # re-audit; 0 means upstream changed the code. Both fail loudly.
   let pattern =
-    re2"""(\.on\(["`]render-process-gone["`],\(?async\(([\w$]+),([\w$]+)\)=>\{)if\(!([\w$]+)\(([\w$]+)\)\)return;(let [\w$]+=[\w$]+(?:\.[\w$]+)*\([^()]*\)(?:,[\w$]+=[\w$]+(?:\.[\w$]+)*\([^()]*\))*;)if\(([^{}]{1,100}[^{}]{0,100}[^{}]{0,100})\)return;(([\w$]+(?:\.[\w$]+)*)\.info\(["`]Main webview render process gone: %o)"""
+    re2"""(\.on\(["`]render-process-gone["`],\(?async\(([\w$]+),([\w$]+)\)=>\{)if\(((?:[\w$]+(?:\.[\w$]+)*\([^()]*\),)*)!([\w$]+)\(([\w$]+)\)\)return;(let [\w$]+=[\w$]+(?:\.[\w$]+)*\([^()]*\)(?:,[\w$]+=[\w$]+(?:\.[\w$]+)*\([^()]*\))*;)if\(([^{}]{1,100}[^{}]{0,100}[^{}]{0,100})\)return;(([\w$]+(?:\.[\w$]+)*)\.info\(["`]Main webview render process gone: %o)"""
   var count = 0
   result = input.replace(
     pattern,
     proc(m: RegexMatch2, s: string): string =
       # group(0) prefix incl. arrow params; group(1) is the (unused) event arg.
       let details = s[m.group(2)] # RenderProcessGoneDetails
-      let pred = s[m.group(3)] # hoisted "should we handle this?" predicate
-      let predArg = s[m.group(4)] # what the guard passes to the predicate
-      let letStmt = s[m.group(5)] # interposed `let x=f();` -- kept verbatim
-      let cond = s[m.group(6)] # second guard (killed-after-wait / destroyed)
-      let tail = s[m.group(7)] # the handled path's own `<logger>.info(...` call
-      let logger = s[m.group(8)] # module-level logger
+      let guardPre = s[m.group(3)]
+        # calls run before the predicate (`II(e),`) -- kept verbatim
+      let pred = s[m.group(4)] # hoisted "should we handle this?" predicate
+      let predArg = s[m.group(5)] # what the guard passes to the predicate
+      let letStmt = s[m.group(6)] # interposed `let x=f();` -- kept verbatim
+      let cond = s[m.group(7)] # second guard (killed-after-wait / destroyed)
+      let tail = s[m.group(8)] # the handled path's own `<logger>.info(...` call
+      let logger = s[m.group(9)] # module-level logger
       if predArg != details:
         # Guard checks something other than the event details -- shape drifted;
         # re-emit the match untouched so count stays 0 and we fail loudly.
         return
-          s[m.group(0)] & "if(!" & pred & "(" & predArg & "))return;" & letStmt & "if(" &
-          cond & ")return;" & tail
+          s[m.group(0)] & "if(" & guardPre & "!" & pred & "(" & predArg & "))return;" &
+          letStmt & "if(" & cond & ")return;" & tail
       inc count
       let logCall =
         logger & """.info("Main webview render process gone (suppressed): %o",{reason:""" &
         details & ".reason,exitCode:" & details & ".exitCode})"
-      s[m.group(0)] & "if(!" & pred & "(" & predArg & ")){" & logCall & ";return}" &
-        letStmt & "if(" & cond & "){" & logCall & ";return}" & tail,
+      s[m.group(0)] & "if(" & guardPre & "!" & pred & "(" & predArg & ")){" & logCall &
+        ";return}" & letStmt & "if(" & cond & "){" & logCall & ";return}" & tail,
   )
   if count != 1:
     if "Main webview render process gone" in input:

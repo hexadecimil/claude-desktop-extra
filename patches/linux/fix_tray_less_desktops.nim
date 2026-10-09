@@ -26,7 +26,10 @@
 #
 # The settings reader name is read (not modified) from upstream's close
 # handler `if(!<settings>("menuBarEnabled")){...tray is disabled...}`, which
-# also pins that all sites sit in the same window-creation function.
+# also pins that all sites sit in the same window-creation function. Since
+# v2.31226.0 the condition is a comma expression that calls
+# `e.preventDefault()` first (`if(e.preventDefault(),!<settings>(...))`); any
+# such leading calls are accepted.
 #
 # Idempotency: the injected startup hook present exactly once, and it is the
 # only marker in the input -> already applied (1/1). Any other marker state
@@ -52,7 +55,7 @@ proc probeExpr(): string =
 
 # Read-only anchor: captures the settings reader, never rewritten.
 let settingRe = re2(
-  """if\(!([\w$]+)\(["`]menuBarEnabled["`]\)\)\{[\w$]+\.info\(["`]Quitting app on main window close since tray is disabled["`]\)"""
+  """if\((?:[\w$]+(?:\.[\w$]+)*\([^()]*\),)*!([\w$]+)\(["`]menuBarEnabled["`]\)\)\{[\w$]+\.info\(["`]Quitting app on main window close since tray is disabled["`]\)"""
 )
 let showOptRe = re2"""show:([\w$]+)&&![\w$]+,backgroundColor:"""
 let showMainRe = re2"""[\w$]+\([\w$]+,\{showMainWindow:([\w$]+)\}\)"""

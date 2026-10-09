@@ -427,6 +427,32 @@ async function partB() {
       });
       check("upstream: --startup stays hidden with no tray host", r.shownAfterLaunch, false);
     }
+
+    section("[B8] v2.31226.0 close handler: preventDefault() moved into the condition");
+    {
+      // Since 2.31226.0 the close handler reads
+      //   if(e.preventDefault(),!Yv("menuBarEnabled")){...tray is disabled...;return}
+      // instead of testing the setting first and calling preventDefault() after.
+      const OLD_CLOSE = 'if(!$v("menuBarEnabled")){P.info("Quitting app on main window close since tray is disabled"),QA();return}e.preventDefault();';
+      const NEW_CLOSE = 'if(e.preventDefault(),!$v("menuBarEnabled")){P.info("Quitting app on main window close since tray is disabled"),QA();return}';
+      check("fixture carries the 2.26454 close shape", FIXTURE.includes(OLD_CLOSE), true);
+      const v31226 = FIXTURE.replace(OLD_CLOSE, NEW_CLOSE);
+      const file2 = join(scratch, "v31226.js");
+      writeFileSync(file2, v31226);
+      const r = runPatch(file2);
+      check("new shape: patch exits 0", r.status, 0);
+      check("new shape: settings reader still captured", /settings \$v\)/.test(r.out), true);
+      const patched2 = readFileSync(file2, "utf8");
+      check("new shape: close handler left verbatim", patched2.includes(NEW_CLOSE), true);
+      check("new shape: second run byte-identical", runPatch(file2).status === 0 && readFileSync(file2, "utf8") === patched2, true);
+      const d = await drive(patched2, {
+        bus: { busctl: "false" },
+        env: WAYLAND,
+        startup: true,
+        trayHost: "unsupported",
+      });
+      check("new shape: --startup launch with no tray host ends up visible", d.shownAfterLaunch, true);
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

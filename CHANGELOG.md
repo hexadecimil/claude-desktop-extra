@@ -2,6 +2,29 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-10-09
+
+### Upstream v2.31226.0
+
+- Re-fitted two patches. In both, upstream now runs a call inside the condition the patch anchors on
+  (`if(<call>,!<test>)`): the suppressed renderer-gone log (the handler's first guard) and tray-less
+  desktops (the close handler, which now calls `preventDefault()` there). The calls are accepted and kept
+  where they are, so behavior is unchanged.
+- **NixOS:** the official build adds `resources/disclaimer`, a small supervisor the app now starts stdio
+  MCP servers, Claude Code sessions and the Android emulator through when the file exists. It asks for the
+  FHS loader, so the Nix package now points it at the store's glibc loader; without that, those launches
+  would fail on NixOS. Other formats ship it as is (it needs only glibc 2.34).
+- **Local builds need Node 24 or newer** for the syntax check: the bundle now uses `await using`, which
+  Node 22 cannot parse. The build says so instead of reporting upstream's own code as broken; CI's Arch
+  container already has a current Node.
+- Flag template 482 -> 515 entries (+34, -1), Extra -> Deployment catalog 179 -> 183 keys (new:
+  `claudeCodeSettings`, `coworkFileReadCheck`, `toolPolicyEndpoint`, `toolPolicyRules`, shown read-only:
+  Desktop ignores them in local and device-managed settings). Electron 44.4.3 and the .deb dependencies
+  are unchanged.
+- Audits: no new platform gate needs Linux work (the new capability keys are supported everywhere or
+  off on every platform), the built-in MCP roster is unchanged, and `fix_ion_dist_linux` still finds both
+  of its sites after ion-dist moved its config chunk.
+
 ## 2026-10-08
 
 ### Nix: `nix run` no longer crashes without `--no-sandbox` (thanks @ttytm, #268)

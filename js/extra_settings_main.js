@@ -339,7 +339,7 @@
     };
   }
 
-  // The managed-config key catalog of Claude Desktop v2.26454.0 (179 keys), read out of the
+  // The managed-config key catalog of Claude Desktop v2.31226.0 (183 keys), read out of the
   // bundle's own schema (flat key, zod leaf type, scopes, title). Upstream drives
   // its 3P Setup wizard from that schema; we cannot reach it from here (it is
   // module-scoped in index.pre.js), so this is a PINNED COPY and is therefore
@@ -573,7 +573,7 @@
       label: "Code tab", dflt: true },
     { key: "desktopHome", kind: "enum", group: "sandbox", scope: "3p",
       label: "Desktop home", options: ["standard", "simple", "no-vm", "off"],
-      note: "Which home surface the app opens on. no-vm is an upstream @next value." },
+      note: "Which home surface the app opens on. Upstream's own wizard offers only standard and off since v2.31226.0; simple and no-vm are still accepted values." },
     { key: "scheduledTasksEnabled", kind: "bool", group: "sandbox", scope: "3p",
       label: "Allow scheduled tasks" },
     { key: "keepAwakeEnabled", kind: "bool", group: "sandbox", scope: "3p", dflt: true,
@@ -591,6 +591,12 @@
       label: "Disabled built-in tools", note: "One tool name per line, e.g. computer-use." },
     { key: "builtinToolPolicy", kind: "json", group: "sandbox", scope: "both",
       label: "Built-in tool policy", note: "JSON object of tool name to allow / ask / deny." },
+    { key: "toolPolicyRules", kind: "json", group: "sandbox", scope: "3p",
+      label: "Tool policy rules",
+      lock: "CEL rules applied only by a self-hosted session host and read only from configuration your bootstrap server serves; upstream ignores a value in device-managed or local settings, so this page never writes it" },
+    { key: "toolPolicyEndpoint", kind: "json", group: "sandbox", scope: "3p",
+      label: "Tool policy endpoint",
+      lock: "asked only by a self-hosted session host and read only from configuration your bootstrap server serves; upstream ignores a value in device-managed or local settings, so this page never writes it" },
     { key: "disableBundledSkills", kind: "bool", group: "sandbox", scope: "both",
       label: "Disable bundled skills and workflows" },
     { key: "skillCreationEnabled", kind: "bool", group: "sandbox", scope: "3p",
@@ -607,6 +613,9 @@
     { key: "codeAllowedRepositories", kind: "json", group: "sandbox", scope: "3p",
       label: "Allowed repositories",
       note: "JSON array of { source: \"github\", repo: \"owner/repo\" } or { source: \"git\", url } entries (optional ref) naming the Git repositories Claude Code may work in; up to 100 (upstream gates this @next)." },
+    { key: "claudeCodeSettings", kind: "json", group: "sandbox", scope: "3p", secret: true,
+      label: "Claude Code settings",
+      lock: "read only by the Claude Code CLI signed in to the organization by itself, from configuration the hosted control plane serves; Claude Desktop never reads it and ignores it in device-managed or local settings, so this page never writes it" },
     { key: "skipWebFetchPreflight", kind: "bool", group: "sandbox", scope: "3p",
       label: "Skip WebFetch domain check",
       note: "Drops Claude Code's per-domain blocklist lookup against api.anthropic.com before a WebFetch; turn it on where that host is firewalled, since the fetch otherwise fails outright (upstream gates this @next)." },
@@ -616,6 +625,9 @@
     { key: "coworkEDRIntegrationVendor", kind: "text", group: "sandbox", scope: "both",
       label: "EDR Integration vendor ID",
       lock: "read from device management only and hidden in upstream's own wizard - deploy it through /etc/claude-desktop/managed-settings.json" },
+    { key: "coworkFileReadCheck", kind: "json", group: "sandbox", scope: "3p",
+      label: "File read check",
+      lock: "internal-only upstream and hidden in its own wizard: a packaged build does not recognize the key yet, and in /etc/claude-desktop/managed-settings.json an unrecognized key makes upstream ignore the whole file, so this page never writes it" },
     { key: "organizationInstructions", kind: "text", group: "sandbox", scope: "3p", maxLen: 3000,
       label: "Organization instructions",
       note: "Free text appended in a delimited block after the app's own system prompt in Chat, Cowork and Code, presented to the model as outranking user preferences; guidance, not an enforced control, and capped at 3000 characters upstream." },
@@ -632,7 +644,7 @@
       label: "Secure VM features" },
     { key: "quickWriteEnabled", kind: "bool", group: "sandbox", scope: "1p",
       label: "Allow Quick Write",
-      note: "Off on a managed computer until set to true (upstream gates this @next)." },
+      note: "Off on a managed computer until set to true." },
     { key: "blockReadsOutsideWorkingDirectories", kind: "bool", group: "sandbox", scope: "both",
       label: "Block reads outside working directories",
       note: "File tools refuse reads outside a Code session's working directories and sandboxed shell commands lose the home directory (upstream gates this @next)." },
@@ -708,12 +720,12 @@
       label: "Microsoft 365 sign-in broker", options: ["auto", "disabled"] },
     { key: "microsoftAuthDefaultAccount", kind: "enum", group: "connectors", scope: "3p",
       label: "Microsoft 365 sign-in with the Windows account", options: ["enabled", "disabled"],
-      note: "Windows-only upstream (silent sign-in with the account signed in to Windows); no effect on Linux (upstream gates this @next)." },
+      note: "Windows-only upstream (silent sign-in with the account signed in to Windows); no effect on Linux." },
     { key: "hardwareBuddyEnabled", kind: "bool", group: "connectors", scope: "1p",
       label: "Allow Hardware Buddy devices", dflt: true },
     { key: "disableConnectorSignInInApp", kind: "bool", group: "connectors", scope: "1p",
       label: "Keep connector sign-in in the browser",
-      note: "A claude.ai connector (remote MCP) OAuth sign-in completes in the system browser instead of the app finishing it from a claude:// link; applies from the next launch (upstream gates this @next)." },
+      note: "A claude.ai connector (remote MCP) OAuth sign-in completes in the system browser instead of the app finishing it from a claude:// link; applies from the next launch." },
 
     // --- plugins ------------------------------------------------------------
     { key: "organizationPluginsUrl", kind: "text", group: "plugins", scope: "3p",
