@@ -2,7 +2,7 @@
 # @patch-type: nim
 #
 # "Extra" area inside the claude.ai Settings modal (Themes + Community Features +
-# Anthropic Features + Deployment).
+# Models + Anthropic Features + Deployment).
 #
 # The Settings modal is rendered by the REMOTE claude.ai SPA inside the mainView
 # WebContentsView, so the UI cannot be a React route of ours: it is injected into
@@ -206,6 +206,6 @@ when isMainModule:
 
   if output != input:
     writeFile(filePath, output)
-    echo "  [PASS] Extra settings area (Themes + Community Features + Anthropic Features + Deployment) added"
+    echo "  [PASS] Extra settings area (Themes + Community Features + Models + Anthropic Features + Deployment) added"
   else:
     echo "  [WARN] No changes made"
