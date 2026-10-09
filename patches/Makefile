@@ -102,6 +102,12 @@ community/add_feature_files_quick_open: \
 
 community/add_feature_files_quick_open_bridge: ../js/files_quick_open_bridge.js
 
+# Custom models: the main-process module embeds the Claude Code preload (the
+# CLI half) via staticRead, so a change to either has to rebuild the binary.
+community/add_feature_custom_models: \
+  ../js/custom_models_main.js \
+  ../js/custom_models_preload.js
+
 # Load large sessions in full: the main patch embeds the main-process module, the
 # worker patch embeds the helper it prepends to the heavy-work worker.
 community/add_feature_transcript_limits: ../js/transcript_limits_main.js
