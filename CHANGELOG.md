@@ -2,9 +2,9 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
-## 2026-10-09
+## 2026-10-10
 
-### Custom models in the Code picker (new community feature)
+### Custom models in the Code picker (new community feature, thanks @hexadecimil, #270)
 
 Models from Anthropic-compatible endpoints (DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, a gateway
 such as LiteLLM, or Anthropic's API on your API credit) can be added to the Code tab's model picker, next
@@ -29,6 +29,8 @@ subscription. Unlike 3P mode, nothing is replaced. Off by default.
 - Keys are stored in a 0600 file, never reach the page or a session's environment, and only go to the
   host they were saved for. Cowork, Dispatch and SSH sessions are not affected.
 - Docs: [`docs/custom-models.md`](docs/custom-models.md).
+
+## 2026-10-09
 
 ### Upstream v2.31226.0 (thanks @hexadecimil, #269)
 
